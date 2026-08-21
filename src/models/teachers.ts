@@ -14,6 +14,8 @@ const teachersTable = pgTable("teachers", {
   phone: text(),
   subject: text().notNull(),
   className: text().notNull(),
+  qualifications: text(),
+  bio: text(),
   attendance: teacherAttendanceEnum().default("PRESENT").notNull(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()

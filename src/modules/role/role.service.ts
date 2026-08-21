@@ -26,6 +26,10 @@ const defaultModules = [
   "attendance",
   "homework",
   "lesson-plans",
+  "report-cards",
+  "weekly-objectives",
+  "homework-submissions",
+  "daycare-reports",
   "fees",
   "notices",
   "calendar",
@@ -53,6 +57,10 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     attendance: ["READ"],
     homework: ["READ"],
     "lesson-plans": ["READ", "UPDATE"],
+    "report-cards": ["READ", "UPDATE"],
+    "weekly-objectives": ["READ", "UPDATE"],
+    "homework-submissions": ["READ"],
+    "daycare-reports": ["READ"],
     fees: ["READ"],
     notices: ["CREATE", "READ", "UPDATE", "DELETE"],
     calendar: ["READ"],
@@ -68,6 +76,12 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     attendance: ["CREATE", "READ", "UPDATE"],
     homework: ["CREATE", "READ", "UPDATE", "DELETE"],
     "lesson-plans": ["CREATE", "READ", "UPDATE"],
+    "report-cards": ["CREATE", "READ", "UPDATE"],
+    // CREATE only: re-submitting replaces the previous entry server-side, so a teacher never
+    // needs UPDATE, which is what approves an objective.
+    "weekly-objectives": ["CREATE", "READ"],
+    "homework-submissions": ["READ"],
+    "daycare-reports": ["CREATE", "READ", "UPDATE"],
     notices: ["READ"],
     calendar: ["READ"],
     documents: ["CREATE", "READ"]
@@ -77,10 +91,16 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     students: ["READ"],
     attendance: ["READ"],
     homework: ["READ"],
+    "report-cards": ["READ"],
+    "weekly-objectives": ["READ"],
+    "homework-submissions": ["CREATE", "READ"],
+    "daycare-reports": ["READ"],
     fees: ["READ"],
     notices: ["READ"],
     calendar: ["READ"],
-    documents: ["READ"]
+    // Leave requests live behind the documents permission, so a parent needs CREATE here to
+    // be able to apply for their child's leave at all.
+    documents: ["CREATE", "READ"]
   },
 };
 

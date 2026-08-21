@@ -21,7 +21,11 @@ import {
   CreateReportCardDto,
   CreateSchoolPolicyDto,
   CreateTimetableDto,
+  CreateWeeklyObjectiveDto,
   ReviewLeaveRequestDto,
+  ReviewWeeklyObjectiveDto,
+  SubmitHomeworkDto,
+  UpdateWeeklyObjectiveDto,
   UpdateCalendarEventDto,
   UpdateDaycareReportDto,
   UpdateDaycareResourceDto,
@@ -112,37 +116,37 @@ export class SchoolController {
     return { message: "Exam deleted successfully" };
   }
 
-  @RequirePermission("documents", "CREATE")
+  @RequirePermission("report-cards", "CREATE")
   @Post("report-cards")
   async createReportCard(@Body() dto: CreateReportCardDto, @User("userId") userId: string) {
     return { data: await this.schoolService.createReportCard(dto, userId) };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("report-cards", "READ")
   @Get("report-cards")
   async getReportCards() {
     return { data: await this.schoolService.getReportCards() };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("report-cards", "READ")
   @Get("report-cards/:id")
   async getReportCard(@Param() { id }: ParamDto) {
     return { data: await this.schoolService.getReportCard(id) };
   }
 
-  @RequirePermission("documents", "UPDATE")
+  @RequirePermission("report-cards", "UPDATE")
   @Patch("report-cards/:id")
   async updateReportCard(@Param() { id }: ParamDto, @Body() dto: UpdateReportCardDto) {
     return { data: await this.schoolService.updateReportCard(id, dto) };
   }
 
-  @RequirePermission("documents", "UPDATE")
+  @RequirePermission("report-cards", "UPDATE")
   @Post("report-cards/:id/publish")
   async publishReportCard(@Param() { id }: ParamDto) {
     return { data: await this.schoolService.publishReportCard(id) };
   }
 
-  @RequirePermission("documents", "DELETE")
+  @RequirePermission("report-cards", "DELETE")
   @Delete("report-cards/:id")
   async deleteReportCard(@Param() { id }: ParamDto) {
     await this.schoolService.deleteReportCard(id);
@@ -255,10 +259,57 @@ export class SchoolController {
     return { message: "Document deleted successfully" };
   }
 
+  @RequirePermission("weekly-objectives", "CREATE")
+  @Post("weekly-objectives")
+  async createWeeklyObjective(@Body() dto: CreateWeeklyObjectiveDto, @User("userId") userId: string) {
+    return { data: await this.schoolService.createWeeklyObjective(dto, userId) };
+  }
+
+  @RequirePermission("weekly-objectives", "READ")
+  @Get("weekly-objectives")
+  async getWeeklyObjectives() {
+    return { data: await this.schoolService.getWeeklyObjectives() };
+  }
+
+  @RequirePermission("weekly-objectives", "UPDATE")
+  @Patch("weekly-objectives/:id")
+  async updateWeeklyObjective(@Param() { id }: ParamDto, @Body() dto: UpdateWeeklyObjectiveDto) {
+    return { data: await this.schoolService.updateWeeklyObjective(id, dto) };
+  }
+
+  @RequirePermission("weekly-objectives", "UPDATE")
+  @Post("weekly-objectives/:id/review")
+  async reviewWeeklyObjective(
+    @Param() { id }: ParamDto,
+    @Body() dto: ReviewWeeklyObjectiveDto,
+    @User("userId") userId: string
+  ) {
+    return { data: await this.schoolService.reviewWeeklyObjective(id, dto, userId) };
+  }
+
+  @RequirePermission("weekly-objectives", "DELETE")
+  @Delete("weekly-objectives/:id")
+  async deleteWeeklyObjective(@Param() { id }: ParamDto) {
+    await this.schoolService.deleteWeeklyObjective(id);
+    return { message: "Weekly objective deleted successfully" };
+  }
+
+  @RequirePermission("homework-submissions", "READ")
+  @Get("homework-submissions")
+  async getHomeworkSubmissions(@Query("studentId") studentId?: string) {
+    return { data: await this.schoolService.getHomeworkSubmissions(studentId) };
+  }
+
+  @RequirePermission("homework-submissions", "CREATE")
+  @Post("homework-submissions/:id/submit")
+  async submitHomework(@Param() { id }: ParamDto, @Body() dto: SubmitHomeworkDto, @User("userId") userId: string) {
+    return { data: await this.schoolService.submitHomework(id, dto, userId) };
+  }
+
   @RequirePermission("documents", "CREATE")
   @Post("leave-requests")
   async createLeaveRequest(@Body() dto: CreateLeaveRequestDto, @User("userId") userId: string, @User("role") role: string) {
-    return { data: await this.schoolService.createLeaveRequest({ ...dto, userId }, role) };
+    return { data: await this.schoolService.createLeaveRequest(dto, role, userId) };
   }
 
   @RequirePermission("documents", "READ")
@@ -385,31 +436,31 @@ export class SchoolController {
     return { message: "School policy deleted successfully" };
   }
 
-  @RequirePermission("documents", "CREATE")
+  @RequirePermission("daycare-reports", "CREATE")
   @Post("daycare-reports")
   async createDaycareReport(@Body() dto: CreateDaycareReportDto, @User("userId") userId: string) {
     return { data: await this.schoolService.createDaycareReport(dto, userId) };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("daycare-reports", "READ")
   @Get("daycare-reports")
   async getDaycareReports() {
     return { data: await this.schoolService.getDaycareReports() };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("daycare-reports", "READ")
   @Get("daycare-reports/:id")
   async getDaycareReport(@Param() { id }: ParamDto) {
     return { data: await this.schoolService.getDaycareReport(id) };
   }
 
-  @RequirePermission("documents", "UPDATE")
+  @RequirePermission("daycare-reports", "UPDATE")
   @Patch("daycare-reports/:id")
   async updateDaycareReport(@Param() { id }: ParamDto, @Body() dto: UpdateDaycareReportDto) {
     return { data: await this.schoolService.updateDaycareReport(id, dto) };
   }
 
-  @RequirePermission("documents", "DELETE")
+  @RequirePermission("daycare-reports", "DELETE")
   @Delete("daycare-reports/:id")
   async deleteDaycareReport(@Param() { id }: ParamDto) {
     await this.schoolService.deleteDaycareReport(id);
@@ -473,8 +524,21 @@ export class SchoolController {
 
   @RequirePermission("notices", "READ")
   @Get("notifications")
-  async getNotifications() {
-    return { data: await this.schoolService.getNotifications() };
+  async getNotifications(@User("userId") userId: string) {
+    return { data: await this.schoolService.getNotificationsForUser(userId) };
+  }
+
+  // Marking as read only ever writes the caller's own row, so plain read access is enough.
+  @RequirePermission("notices", "READ")
+  @Post("notifications/read-all")
+  async markAllNotificationsRead(@User("userId") userId: string) {
+    return { data: await this.schoolService.markAllNotificationsRead(userId) };
+  }
+
+  @RequirePermission("notices", "READ")
+  @Post("notifications/:id/read")
+  async markNotificationRead(@Param() { id }: ParamDto, @User("userId") userId: string) {
+    return { data: await this.schoolService.markNotificationRead(id, userId) };
   }
 
   @RequirePermission("notices", "READ")

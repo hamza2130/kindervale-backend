@@ -22,6 +22,16 @@ export class CreateTeacherDto {
   className: string;
 
   @IsOptional()
+  @IsString({ message: "Qualifications must be a string" })
+  @Trim()
+  qualifications?: string;
+
+  @IsOptional()
+  @IsString({ message: "Bio must be a string" })
+  @Trim()
+  bio?: string;
+
+  @IsOptional()
   @IsEnum(teacherAttendanceEnum.enumValues, {
     message: `Attendance must be one of: ${teacherAttendanceEnum.enumValues.join(", ")}`
   })
@@ -53,6 +63,16 @@ export class UpdateTeacherDto {
   @IsString({ message: "Class name must be a string" })
   @Trim()
   className?: string;
+
+  @IsOptional()
+  @IsString({ message: "Qualifications must be a string" })
+  @Trim()
+  qualifications?: string;
+
+  @IsOptional()
+  @IsString({ message: "Bio must be a string" })
+  @Trim()
+  bio?: string;
 
   @IsOptional()
   @IsEnum(teacherAttendanceEnum.enumValues, {

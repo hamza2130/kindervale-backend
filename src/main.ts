@@ -21,6 +21,8 @@ const apiRoots = [
   "attendance",
   "homework",
   "lesson-plans",
+  "homework-submissions",
+  "weekly-objectives",
   "roles",
   "permissions",
   "dashboard",

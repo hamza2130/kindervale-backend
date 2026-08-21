@@ -21,7 +21,10 @@ import {
   leaveRequestsTable,
   notificationsTable,
   parentsTable,
+  homeworkSubmissionsTable,
+  notificationReadsTable,
   reportCardsTable,
+  weeklyObjectivesTable,
   schoolPoliciesTable,
   settingsTable,
   studentsTable,
@@ -45,6 +48,10 @@ import {
   CreateReportCardDto,
   CreateSchoolPolicyDto,
   CreateTimetableDto,
+  CreateWeeklyObjectiveDto,
+  ReviewWeeklyObjectiveDto,
+  SubmitHomeworkDto,
+  UpdateWeeklyObjectiveDto,
   ReviewLeaveRequestDto,
   UpdateCalendarEventDto,
   UpdateDaycareReportDto,
@@ -219,10 +226,15 @@ export class SchoolService {
       originalName,
       mimeType: file.mimetype || "application/octet-stream",
       size: file.size,
-      activity: (dto as any).activity,
-      caption: (dto as any).caption,
-      classId: (dto as any).classId,
-      expiresAt: (dto as any).expiresAt
+      activity: dto.activity,
+      caption: dto.caption,
+      classId: dto.classId,
+      expiresAt: dto.expiresAt,
+      kind: dto.kind,
+      scope: dto.scope,
+      subject: dto.subject,
+      cls: dto.cls,
+      teacher: dto.teacher
     };
 
     return this.createDocument(
@@ -273,17 +285,22 @@ export class SchoolService {
     }
   }
 
-  async createLeaveRequest(dto: CreateLeaveRequestDto, role?: string) {
-    if (!dto.userId) {
+  async createLeaveRequest(dto: CreateLeaveRequestDto, role?: string, authenticatedUserId?: string) {
+    const normalizedRole = role?.toUpperCase();
+    const isAdminCreated =
+      normalizedRole === "ADMIN" || normalizedRole === "DAYCAREADMIN" || normalizedRole === "PRINCIPAL";
+    // Admins may file a request on somebody else's behalf, so the request stays owned by that
+    // person. Everyone else can only ever file their own leave.
+    const userId = isAdminCreated ? (dto.userId ?? authenticatedUserId) : authenticatedUserId;
+    if (!userId) {
       throw new BadRequestException("Authenticated user is required to create a leave request");
     }
-    const normalizedRole = role?.toUpperCase();
-    const isAdminCreated = normalizedRole === "ADMIN" || normalizedRole === "DAYCAREADMIN" || normalizedRole === "PRINCIPAL";
-    const status = isAdminCreated ? dto.status ?? "PENDING" : "PENDING";
+    const status = isAdminCreated ? (dto.status ?? "PENDING") : "PENDING";
     const leave = await this.insert(
       leaveRequestsTable,
       {
         ...dto,
+        userId,
         fromDate: dto.fromDate.slice(0, 10),
         toDate: dto.toDate.slice(0, 10),
         status
@@ -291,7 +308,7 @@ export class SchoolService {
       "leave request"
     );
     if (status === "APPROVED") {
-      await this.applyApprovedStudentLeaveSideEffects(leave, dto.userId);
+      await this.applyApprovedStudentLeaveSideEffects(leave, authenticatedUserId ?? userId);
     }
     return leave;
   }
@@ -324,7 +341,9 @@ export class SchoolService {
       .leftJoin(studentsTable, eq(leaveRequestsTable.studentId, studentsTable.id))
       .$dynamic();
 
-    if (role === "TEACHER" && filter?.userId) {
+    // Teachers and parents only ever see the requests they filed themselves; admins and the
+    // principal see the whole queue.
+    if ((role === "TEACHER" || role === "PARENT") && filter?.userId) {
       return query.where(eq(leaveRequestsTable.userId, filter.userId));
     }
 
@@ -495,6 +514,138 @@ export class SchoolService {
     const [settings] = await this.databaseService.db.select({ id: settingsTable.id }).from(settingsTable).limit(1);
     if (!settings) return this.insert(settingsTable, dto, "settings");
     return this.update(settingsTable, settings.id, dto, "Settings");
+  }
+
+  // ---------------------------------------------------------------- homework hand-ins
+  /** Recording a hand-in twice is a no-op rather than an error. */
+  async submitHomework(homeworkId: string, dto: SubmitHomeworkDto, submittedBy?: string) {
+    const [existing] = await this.databaseService.db
+      .select({ id: homeworkSubmissionsTable.id })
+      .from(homeworkSubmissionsTable)
+      .where(
+        and(
+          eq(homeworkSubmissionsTable.homeworkId, homeworkId),
+          eq(homeworkSubmissionsTable.studentId, dto.studentId)
+        )
+      )
+      .limit(1);
+
+    if (existing) {
+      return this.update(
+        homeworkSubmissionsTable,
+        existing.id,
+        { note: dto.note, submittedBy, submittedAt: new Date() },
+        "Homework submission"
+      );
+    }
+
+    return this.insert(
+      homeworkSubmissionsTable,
+      { homeworkId, studentId: dto.studentId, note: dto.note, submittedBy },
+      "homework submission"
+    );
+  }
+
+  getHomeworkSubmissions(studentId?: string) {
+    const query = this.databaseService.db.select().from(homeworkSubmissionsTable).$dynamic();
+    return studentId ? query.where(eq(homeworkSubmissionsTable.studentId, studentId)) : query;
+  }
+
+  // ---------------------------------------------------------------- notification read state
+  /** Notifications carry an audience, so read state has to be tracked per person. */
+  async getNotificationsForUser(userId?: string) {
+    const notifications = await this.getNotifications();
+    if (!userId) return notifications.map((notification) => ({ ...notification, read: false }));
+
+    const reads = await this.databaseService.db
+      .select({ notificationId: notificationReadsTable.notificationId })
+      .from(notificationReadsTable)
+      .where(eq(notificationReadsTable.userId, userId));
+    const readIds = new Set(reads.map((row) => row.notificationId));
+
+    return notifications.map((notification) => ({ ...notification, read: readIds.has(notification.id) }));
+  }
+
+  async markNotificationRead(notificationId: string, userId: string) {
+    await this.databaseService.db
+      .insert(notificationReadsTable)
+      .values({ notificationId, userId })
+      .onConflictDoNothing();
+    return { read: true };
+  }
+
+  async markAllNotificationsRead(userId: string) {
+    const notifications = await this.getNotifications();
+    if (!notifications.length) return { read: 0 };
+    await this.databaseService.db
+      .insert(notificationReadsTable)
+      .values(notifications.map((notification) => ({ notificationId: notification.id, userId })))
+      .onConflictDoNothing();
+    return { read: notifications.length };
+  }
+
+  // ---------------------------------------------------------------- weekly objectives
+  /** Re-submitting the same week replaces the previous entry rather than stacking duplicates,
+   *  which also keeps teachers on CREATE-only access. */
+  async createWeeklyObjective(dto: CreateWeeklyObjectiveDto, teacherId: string) {
+    const [existing] = await this.databaseService.db
+      .select({ id: weeklyObjectivesTable.id })
+      .from(weeklyObjectivesTable)
+      .where(
+        and(
+          eq(weeklyObjectivesTable.teacherId, teacherId),
+          eq(weeklyObjectivesTable.className, dto.className),
+          eq(weeklyObjectivesTable.week, dto.week)
+        )
+      )
+      .limit(1);
+
+    if (existing) {
+      return this.update(
+        weeklyObjectivesTable,
+        existing.id,
+        { ...dto, status: "PENDING", reviewRemarks: null, reviewedBy: null, reviewedAt: null },
+        "Weekly objective"
+      );
+    }
+
+    return this.insert(weeklyObjectivesTable, { ...dto, teacherId, status: "PENDING" }, "weekly objective");
+  }
+
+  getWeeklyObjectives() {
+    return this.databaseService.db
+      .select({
+        id: weeklyObjectivesTable.id,
+        teacherId: weeklyObjectivesTable.teacherId,
+        classId: weeklyObjectivesTable.classId,
+        className: weeklyObjectivesTable.className,
+        week: weeklyObjectivesTable.week,
+        message: weeklyObjectivesTable.message,
+        status: weeklyObjectivesTable.status,
+        reviewRemarks: weeklyObjectivesTable.reviewRemarks,
+        createdAt: weeklyObjectivesTable.createdAt,
+        updatedAt: weeklyObjectivesTable.updatedAt,
+        teacher: usersTable.name
+      })
+      .from(weeklyObjectivesTable)
+      .leftJoin(usersTable, eq(weeklyObjectivesTable.teacherId, usersTable.id));
+  }
+
+  updateWeeklyObjective(id: string, dto: UpdateWeeklyObjectiveDto) {
+    return this.update(weeklyObjectivesTable, id, { ...dto, status: "PENDING" }, "Weekly objective");
+  }
+
+  reviewWeeklyObjective(id: string, dto: ReviewWeeklyObjectiveDto, reviewedBy?: string) {
+    return this.update(
+      weeklyObjectivesTable,
+      id,
+      { ...dto, reviewedBy, reviewedAt: new Date() },
+      "Weekly objective"
+    );
+  }
+
+  deleteWeeklyObjective(id: string) {
+    return this.delete(weeklyObjectivesTable, id, "Weekly objective");
   }
 
   private async insert(table: any, dto: object, label: string) {

@@ -1,6 +1,6 @@
 import cuid from "common/cuid";
 import usersTable from "models/users";
-import { date, integer, numeric, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { date, integer, numeric, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 export const feeStatusEnum = pgEnum("fee_status", ["PAID", "PENDING", "PARTIAL"]);
 export type FeeStatus = (typeof feeStatusEnum.enumValues)[number];
@@ -282,7 +282,67 @@ export const daycareReportsTable = pgTable("daycare_reports", {
   nap: text(),
   activities: text(),
   notes: text(),
+  // The daily report and the daycare care log are two views of the same day, so both sets of
+  // fields live on one row rather than in two near-identical tables.
+  mood: text(),
+  arrival: text(),
+  snack: text(),
+  departure: text(),
   createdBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp().defaultNow().notNull(),
+  updatedAt: timestamp().defaultNow().notNull()
+});
+
+/** One row per student per homework item; the presence of a row means "handed in". */
+export const homeworkSubmissionsTable = pgTable(
+  "homework_submissions",
+  {
+    id: cuid().primaryKey(),
+    homeworkId: text()
+      .notNull()
+      .references(() => homeworkTable.id, { onDelete: "cascade" }),
+    studentId: text()
+      .notNull()
+      .references(() => studentsTable.id, { onDelete: "cascade" }),
+    note: text(),
+    submittedBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+    submittedAt: timestamp().defaultNow().notNull(),
+    createdAt: timestamp().defaultNow().notNull(),
+    updatedAt: timestamp().defaultNow().notNull()
+  },
+  (table) => [unique("homework_submissions_homework_student_unique").on(table.homeworkId, table.studentId)]
+);
+
+/** Read state is per person, so it cannot live as a flag on the notification itself. */
+export const notificationReadsTable = pgTable(
+  "notification_reads",
+  {
+    id: cuid().primaryKey(),
+    notificationId: text()
+      .notNull()
+      .references(() => notificationsTable.id, { onDelete: "cascade" }),
+    userId: text()
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    readAt: timestamp().defaultNow().notNull()
+  },
+  (table) => [unique("notification_reads_notification_user_unique").on(table.notificationId, table.userId)]
+);
+
+/** A teacher's weekly objectives for their class, approved by Admin before parents see them. */
+export const weeklyObjectivesTable = pgTable("weekly_objectives", {
+  id: cuid().primaryKey(),
+  teacherId: text()
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  classId: text().references(() => classesTable.id, { onDelete: "set null" }),
+  className: text().notNull(),
+  week: text().notNull(),
+  message: text().notNull(),
+  status: reviewStatusEnum().default("PENDING").notNull(),
+  reviewRemarks: text(),
+  reviewedBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+  reviewedAt: timestamp(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });
@@ -345,6 +405,9 @@ export type Expense = typeof expensesTable.$inferSelect;
 export type Faq = typeof faqsTable.$inferSelect;
 export type SchoolPolicy = typeof schoolPoliciesTable.$inferSelect;
 export type DaycareReport = typeof daycareReportsTable.$inferSelect;
+export type HomeworkSubmission = typeof homeworkSubmissionsTable.$inferSelect;
+export type NotificationRead = typeof notificationReadsTable.$inferSelect;
+export type WeeklyObjective = typeof weeklyObjectivesTable.$inferSelect;
 export type DaycareResource = typeof daycareResourcesTable.$inferSelect;
 export type Backup = typeof backupsTable.$inferSelect;
 export type Notification = typeof notificationsTable.$inferSelect;

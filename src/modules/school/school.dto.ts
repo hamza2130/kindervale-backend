@@ -205,9 +205,77 @@ export class CreateDocumentDto {
   @IsOptional()
   @IsDateString()
   expiresAt?: string;
+
+  /** Which portal feature the file was attached from (bookList, yearlyPlan, teacherDocument, ...). */
+  @IsOptional()
+  @IsString()
+  @Trim()
+  kind?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  scope?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  subject?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  cls?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  teacher?: string;
 }
 
 export class UpdateDocumentDto extends PartialType(CreateDocumentDto) {}
+
+export class CreateWeeklyObjectiveDto {
+  @IsOptional()
+  @IsString()
+  @Trim()
+  classId?: string;
+
+  @IsString()
+  @Trim()
+  className: string;
+
+  @IsString()
+  @Trim()
+  week: string;
+
+  @IsString()
+  @Trim()
+  message: string;
+}
+
+export class UpdateWeeklyObjectiveDto extends PartialType(CreateWeeklyObjectiveDto) {}
+
+export class ReviewWeeklyObjectiveDto {
+  @IsEnum(reviewStatusEnum.enumValues)
+  status: ReviewStatus;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  reviewRemarks?: string;
+}
+
+export class SubmitHomeworkDto {
+  @IsString()
+  @Trim()
+  studentId: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  note?: string;
+}
 
 export class CreateLeaveRequestDto {
   @IsOptional()
@@ -346,6 +414,26 @@ export class CreateDaycareReportDto {
   @IsString()
   @Trim()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  mood?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  arrival?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  snack?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  departure?: string;
 }
 
 export class UpdateDaycareReportDto extends PartialType(CreateDaycareReportDto) {}
