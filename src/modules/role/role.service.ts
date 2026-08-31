@@ -120,10 +120,11 @@ export class RoleService implements OnApplicationBootstrap {
 
   async onApplicationBootstrap() {
     try {
+      await this.databaseService.whenReady();
       const result = await this.seedDefaults();
       this.logger.log(`Permissions seeded: ${result.roles} roles, ${result.permissions} permissions`);
     } catch (error) {
-      this.logger.warn("Permission seed skipped (DB may not be ready yet)");
+      this.logger.warn("Permission seed skipped: " + (error as Error).message);
     }
   }
 

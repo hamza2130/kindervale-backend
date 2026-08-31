@@ -28,6 +28,7 @@ export class ClassroomService implements OnApplicationBootstrap {
 
   async onApplicationBootstrap() {
     try {
+      await this.databaseService.whenReady();
       for (const name of ClassroomService.DEFAULT_CLASSES) {
         await this.databaseService.db
           .insert(classesTable)
@@ -35,8 +36,8 @@ export class ClassroomService implements OnApplicationBootstrap {
           .onConflictDoNothing();
       }
       this.logger.log(`Default classes seeded (${ClassroomService.DEFAULT_CLASSES.length})`);
-    } catch {
-      this.logger.warn("Class seeding skipped (DB may not be ready)");
+    } catch (error) {
+      this.logger.warn("Class seeding skipped: " + (error as Error).message);
     }
   }
 
