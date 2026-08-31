@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, NotFoundException, type OnModuleInit } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, NotFoundException, type OnApplicationBootstrap } from "@nestjs/common";
 import { and, asc, count, desc, eq, ilike, ne, or, type SQL } from "drizzle-orm";
 import { classesTable, sectionsTable, type ClassRoom, type Section } from "models/school";
 import usersTable from "models/users";
@@ -13,7 +13,7 @@ import type {
 } from "modules/classroom/classroom.dto";
 
 @Injectable()
-export class ClassroomService implements OnModuleInit {
+export class ClassroomService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ClassroomService.name);
   constructor(private readonly databaseService: DatabaseService) {}
 
@@ -26,7 +26,7 @@ export class ClassroomService implements OnModuleInit {
     "Grade 2"
   ];
 
-  async onModuleInit() {
+  async onApplicationBootstrap() {
     try {
       for (const name of ClassroomService.DEFAULT_CLASSES) {
         await this.databaseService.db
