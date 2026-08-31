@@ -12,7 +12,14 @@ export class StudentService {
 
   async createStudent(dto: CreateStudentDto): Promise<Student> {
     await this.validateRelations(dto.userId, dto.parentId);
-    const admissionNo = dto.admissionNo?.trim() || `ADM-${createId()}`;
+    let admissionNo = dto.admissionNo?.trim() || "";
+    if (!admissionNo) {
+      const year = new Date().getFullYear();
+      const [{ total }] = await this.databaseService.db
+        .select({ total: count() })
+        .from(studentsTable);
+      admissionNo = `KV-${year}-${String(total + 1).padStart(4, "0")}`;
+    }
 
     const [existingStudent] = await this.databaseService.db
       .select({ id: studentsTable.id })

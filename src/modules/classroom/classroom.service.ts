@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, NotFoundException, type OnModuleInit } from "@nestjs/common";
 import { and, asc, count, desc, eq, ilike, ne, or, type SQL } from "drizzle-orm";
 import { classesTable, sectionsTable, type ClassRoom, type Section } from "models/school";
 import usersTable from "models/users";
@@ -13,8 +13,32 @@ import type {
 } from "modules/classroom/classroom.dto";
 
 @Injectable()
-export class ClassroomService {
+export class ClassroomService implements OnModuleInit {
+  private readonly logger = new Logger(ClassroomService.name);
   constructor(private readonly databaseService: DatabaseService) {}
+
+  private static readonly DEFAULT_CLASSES = [
+    "School Readiness",
+    "Pre-Nursery",
+    "Nursery",
+    "KG",
+    "Grade 1",
+    "Grade 2"
+  ];
+
+  async onModuleInit() {
+    try {
+      for (const name of ClassroomService.DEFAULT_CLASSES) {
+        await this.databaseService.db
+          .insert(classesTable)
+          .values({ name, teacher: "", capacity: 30 })
+          .onConflictDoNothing();
+      }
+      this.logger.log(`Default classes seeded (${ClassroomService.DEFAULT_CLASSES.length})`);
+    } catch {
+      this.logger.warn("Class seeding skipped (DB may not be ready)");
+    }
+  }
 
   async createClass(dto: CreateClassDto): Promise<ClassRoom> {
     await this.validateTeacher(dto.homeroomTeacherId);

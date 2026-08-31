@@ -187,7 +187,24 @@ export class SchoolService {
     return this.delete(calendarEventsTable, id, "Calendar event");
   }
 
-  createTimetable(dto: CreateTimetableDto) {
+  async createTimetable(dto: CreateTimetableDto) {
+    // Check for time-slot conflict: same class + same day + overlapping time
+    const conflicts = await this.databaseService.db
+      .select({ id: timetablesTable.id })
+      .from(timetablesTable)
+      .where(
+        and(
+          eq(timetablesTable.className, dto.className),
+          eq(timetablesTable.dayOfWeek, dto.dayOfWeek),
+          eq(timetablesTable.startTime, dto.startTime)
+        )
+      )
+      .limit(1);
+    if (conflicts.length > 0) {
+      throw new ConflictException(
+        `Time slot ${dto.startTime} on ${dto.dayOfWeek} is already taken for ${dto.className}`
+      );
+    }
     return this.insert(timetablesTable, dto, "timetable");
   }
 

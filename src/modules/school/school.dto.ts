@@ -1,6 +1,6 @@
 import { PartialType } from "@nestjs/mapped-types";
 import { Type } from "class-transformer";
-import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Min } from "class-validator";
+import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Matches, Min } from "class-validator";
 import { Trim } from "common/transformer";
 import {
   documentTypeEnum,
@@ -124,14 +124,19 @@ export class CreateTimetableDto {
 
   @IsString()
   @Trim()
+  @Matches(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$/i, {
+    message: "dayOfWeek must be a valid day name (e.g. Monday)"
+  })
   dayOfWeek: string;
 
   @IsString()
   @Trim()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "startTime must be in HH:mm format (00:00–23:59)" })
   startTime: string;
 
   @IsString()
   @Trim()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "endTime must be in HH:mm format (00:00–23:59)" })
   endTime: string;
 
   @IsString()

@@ -29,7 +29,8 @@ export class CreateStudentDto {
 
   @Type(() => Number)
   @IsInt({ message: "Age must be an integer" })
-  @Min(1, { message: "Age must be at least 1" })
+  @Min(2, { message: "Age must be at least 2" })
+  @Max(18, { message: "Age cannot exceed 18" })
   age: number;
 
   @IsOptional()
