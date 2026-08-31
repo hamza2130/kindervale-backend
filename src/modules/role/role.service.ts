@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, NotFoundException, type OnModuleInit } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, NotFoundException, type OnApplicationBootstrap } from "@nestjs/common";
 import { and, eq, inArray } from "drizzle-orm";
 import { permissionsTable, rolePermissionsTable, rolesTable, type PermissionAction } from "models/roles";
 import { type UserRole, userRoleEnum } from "models/users";
@@ -114,11 +114,11 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
 };
 
 @Injectable()
-export class RoleService implements OnModuleInit {
+export class RoleService implements OnApplicationBootstrap {
   private readonly logger = new Logger(RoleService.name);
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async onModuleInit() {
+  async onApplicationBootstrap() {
     try {
       const result = await this.seedDefaults();
       this.logger.log(`Permissions seeded: ${result.roles} roles, ${result.permissions} permissions`);
