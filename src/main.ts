@@ -58,7 +58,7 @@ const apiRoots = [
   });
   app.set("trust proxy", "loopback");
   app.use(helmet());
-  app.enableCors({
+    app.enableCors({
     origin: [
       ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : []),
       "http://localhost:3000",
