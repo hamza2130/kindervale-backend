@@ -124,8 +124,8 @@ export class CreateTimetableDto {
 
   @IsString()
   @Trim()
-  @Matches(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$/i, {
-    message: "dayOfWeek must be a valid day name (e.g. Monday)"
+  @Matches(/^(Mon(day)?|Tue(sday)?|Wed(nesday)?|Thu(rsday)?|Fri(day)?|Sat(urday)?|Sun(day)?)$/i, {
+    message: "dayOfWeek must be a valid day name (e.g. Monday or Mon)"
   })
   dayOfWeek: string;
 
