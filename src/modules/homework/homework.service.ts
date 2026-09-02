@@ -78,8 +78,11 @@ export class HomeworkService {
 
     if (teacherId) {
       const [teacher] = await this.databaseService.db.select().from(usersTable).where(eq(usersTable.id, teacherId)).limit(1);
-      if (!teacher) throw new NotFoundException("Teacher user not found");
-      if (teacher.role !== "TEACHER") throw new ConflictException("Teacher user role must be TEACHER");
+      if (!teacher) throw new NotFoundException("Author user not found");
+      // Any staff member (teacher, admin, principal, daycare admin) may assign homework.
+      // Only parents are disallowed. Previously this rejected everyone but TEACHER, which made
+      // an admin assigning homework fail with a 409.
+      if (teacher.role === "PARENT") throw new ConflictException("A parent cannot be the author of homework");
     }
   }
 

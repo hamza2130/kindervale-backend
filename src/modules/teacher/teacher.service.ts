@@ -118,6 +118,12 @@ export class TeacherService {
   }
 
   async getTeacherByUserId(userId: string): Promise<TeacherWithUser> {
+    // Self-heal: a teacher account whose profile row was never created (e.g. the login was
+    // generated before the profile got linked) would previously 404 here, breaking both the
+    // "My Profile" load AND the save. We provision a blank profile on demand so the teacher
+    // portal always has a row to read and write.
+    await this.ensureTeacherProfileId(userId);
+
     const [teacher] = await this.databaseService.db
       .select({
         id: teachersTable.id,
@@ -146,8 +152,33 @@ export class TeacherService {
   }
 
   async updateTeacherByUserId(userId: string, dto: UpdateTeacherDto): Promise<TeacherWithUser> {
-    const teacher = await this.getTeacherByUserId(userId);
-    return this.updateTeacher(teacher.id, dto);
+    const teacherId = await this.ensureTeacherProfileId(userId);
+    return this.updateTeacher(teacherId, dto);
+  }
+
+  /**
+   * Returns the teacher-profile id for a user, creating a blank profile if none exists yet.
+   * Only accounts with the TEACHER role get a profile; anything else is rejected clearly
+   * instead of silently creating an orphan row.
+   */
+  private async ensureTeacherProfileId(userId: string): Promise<string> {
+    const [existing] = await this.databaseService.db
+      .select({ id: teachersTable.id })
+      .from(teachersTable)
+      .where(eq(teachersTable.userId, userId))
+      .limit(1);
+    if (existing) return existing.id;
+
+    const [user] = await this.databaseService.db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+    if (!user) throw new NotFoundException("User not found");
+    if (user.role !== "TEACHER") throw new ConflictException("Only teacher accounts have a teacher profile");
+
+    const [created] = await this.databaseService.db
+      .insert(teachersTable)
+      .values({ userId, subject: "General", className: "" })
+      .returning({ id: teachersTable.id });
+    if (!created) throw new ConflictException("Failed to create teacher profile");
+    return created.id;
   }
 
   async updateTeacher(id: string, dto: UpdateTeacherDto): Promise<TeacherWithUser> {
