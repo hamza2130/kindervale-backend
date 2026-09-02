@@ -3,7 +3,7 @@ import { ParamDto } from "common/common.dto";
 import { AuthGuard } from "middleware/auth.guard";
 import { RequirePermission } from "middleware/permission.decorator";
 import { PermissionGuard } from "middleware/permission.guard";
-import { CreateUserDto, UpdateUserDto, UserListQueryDto } from "modules/user/user.dto";
+import { CreateUserDto, GenerateLoginDto, UpdateUserDto, UserListQueryDto } from "modules/user/user.dto";
 import { UserService } from "modules/user/user.service";
 
 @UseGuards(AuthGuard, PermissionGuard)
@@ -16,6 +16,13 @@ export class UserController {
   async createUser(@Body() dto: CreateUserDto) {
     const user = await this.userService.createUser(dto);
     return { data: user };
+  }
+
+  @RequirePermission("users", "CREATE")
+  @Post("generate-login")
+  async generateLogin(@Body() dto: GenerateLoginDto) {
+    const result = await this.userService.generateLogin(dto);
+    return { data: result };
   }
 
   @RequirePermission("users", "READ")

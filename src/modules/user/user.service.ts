@@ -1,9 +1,11 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, getTableColumns, ilike, ne, or, type SQL } from "drizzle-orm";
-import usersTable, { type SafeUser } from "models/users";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { and, asc, count, desc, eq, getTableColumns, ilike, inArray, ne, or, type SQL } from "drizzle-orm";
+import usersTable, { type SafeUser, type UserRole } from "models/users";
+import { parentsTable, studentsTable } from "models/school";
+import teachersTable from "models/teachers";
 import { DatabaseService } from "modules/database/database.service";
 import { HashService } from "modules/hash/hash.service";
-import type { CreateUserDto, UpdateUserDto, UserListQueryDto } from "modules/user/user.dto";
+import type { CreateUserDto, GenerateLoginDto, UpdateUserDto, UserListQueryDto } from "modules/user/user.dto";
 
 @Injectable()
 export class UserService {
@@ -157,5 +159,90 @@ export class UserService {
     }
 
     return conditions.length ? and(...conditions) : undefined;
+  }
+
+  /**
+   * One-shot "Generate Login" used by the admin portal. Creates the user account
+   * with a known, returnable password, creates (or reuses) the matching
+   * teacher/parent record, and — for parents — links the selected students via
+   * students.parentId so the parent portal can find their children.
+   *
+   * Returns the plaintext password ONCE so the admin can hand it to the family.
+   */
+  async generateLogin(dto: GenerateLoginDto) {
+    const roleUpper: UserRole = dto.role === "Parent" ? "PARENT" : "TEACHER";
+
+    if (dto.role === "Parent" && (!dto.studentIds || dto.studentIds.length === 0)) {
+      throw new BadRequestException("Select at least one child for a parent login");
+    }
+
+    // Build a unique username and a readable, shareable password.
+    const base = dto.name.trim().toLowerCase().replace(/[^a-z]+/g, "");
+    const suffix = Math.floor(10 + Math.random() * 90);
+    const username = `${base || "user"}${suffix}`;
+    const email = dto.email?.trim() || `${username}@kindervale.local`;
+    const firstName = dto.name.trim().split(/\s+/)[0] || "User";
+    const password = `${firstName.charAt(0).toUpperCase()}${firstName.slice(1)}@2026`;
+
+    // Guard against collisions before we start inserting.
+    const [clash] = await this.databaseService.db
+      .select({ id: usersTable.id, email: usersTable.email, username: usersTable.username })
+      .from(usersTable)
+      .where(or(eq(usersTable.email, email), eq(usersTable.username, username)))
+      .limit(1);
+    if (clash?.email === email) throw new ConflictException("A login with this email already exists");
+    if (clash?.username === username) throw new ConflictException("Username collision, please try again");
+
+    // 1. Create the user account.
+    const { password: _pw, ...safeColumns } = getTableColumns(usersTable);
+    const [user] = await this.databaseService.db
+      .insert(usersTable)
+      .values({
+        name: dto.name.trim(),
+        username,
+        email,
+        password: await this.hashService.hash(password),
+        role: roleUpper,
+      })
+      .returning(safeColumns);
+    if (!user) throw new ConflictException("Failed to create user");
+
+    if (dto.role === "Teacher") {
+      // 2a. Create the teacher profile linked to this user.
+      await this.databaseService.db
+        .insert(teachersTable)
+        .values({
+          userId: user.id,
+          className: dto.className?.trim() || "",
+          subject: dto.subject?.trim() || "General",
+        })
+        .onConflictDoNothing();
+      return { user, username, password, role: "Teacher" as const };
+    }
+
+    // 2b. Parent: create the parent record linked to this user...
+    const [parent] = await this.databaseService.db
+      .insert(parentsTable)
+      .values({ userId: user.id, name: dto.name.trim(), email })
+      .returning();
+    if (!parent) throw new ConflictException("Failed to create parent record");
+
+    // 3. ...then link every selected student to this parent.
+    const ids = dto.studentIds ?? [];
+    const found = await this.databaseService.db
+      .select({ id: studentsTable.id })
+      .from(studentsTable)
+      .where(inArray(studentsTable.id, ids));
+    if (found.length !== ids.length) {
+      const foundIds = new Set(found.map((s) => s.id));
+      const missing = ids.filter((id) => !foundIds.has(id));
+      throw new BadRequestException(`Unknown student id(s): ${missing.join(", ")}`);
+    }
+    await this.databaseService.db
+      .update(studentsTable)
+      .set({ parentId: parent.id, updatedAt: new Date() })
+      .where(inArray(studentsTable.id, ids));
+
+    return { user, parent, username, password, role: "Parent" as const, linkedStudentIds: ids };
   }
 }

@@ -109,3 +109,40 @@ export class UserListQueryDto {
   @IsIn(["asc", "desc"], { message: "Sort order must be asc or desc" })
   sortOrder?: "asc" | "desc" = "desc";
 }
+
+export class GenerateLoginDto {
+  @IsString({ message: "Name must be a string" })
+  @Trim()
+  name: string;
+
+  @IsIn(["Teacher", "Parent"], { message: "Role must be Teacher or Parent" })
+  role: "Teacher" | "Parent";
+
+  @IsOptional()
+  @IsEmail({}, { message: "Email must be valid" })
+  @Trim()
+  email?: string;
+
+  // For a parent login, the students this parent is guardian of.
+  // At least one student id is required when role === "Parent".
+  @IsOptional()
+  @IsString({ each: true, message: "Each student id must be a string" })
+  studentIds?: string[];
+
+  // Optional: link to an existing teacher/parent record instead of creating a new one.
+  @IsOptional()
+  @IsString()
+  @Trim()
+  linkedRecordId?: string;
+
+  // Teacher-only optional metadata
+  @IsOptional()
+  @IsString()
+  @Trim()
+  className?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  subject?: string;
+}
