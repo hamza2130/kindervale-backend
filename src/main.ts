@@ -57,7 +57,7 @@ const apiRoots = [
     next();
   });
   app.set("trust proxy", "loopback");
-  app.use(helmet());
+  app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
     app.enableCors({
     origin: [
       ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : []),
