@@ -176,6 +176,53 @@ export class UserService {
       throw new BadRequestException("Select at least one child for a parent login");
     }
 
+    const { password: _pw, ...safeColumns } = getTableColumns(usersTable);
+
+    // ── Regeneration: if linkedRecordId points to a profile that already has a
+    //    user account, reset that account's password instead of creating a duplicate. ──
+    if (dto.linkedRecordId) {
+      let existingUserId: string | null = null;
+      if (dto.role === "Teacher") {
+        const [teacher] = await this.databaseService.db
+          .select({ userId: teachersTable.userId })
+          .from(teachersTable)
+          .where(eq(teachersTable.id, dto.linkedRecordId))
+          .limit(1);
+        existingUserId = teacher?.userId ?? null;
+      } else {
+        const [parent] = await this.databaseService.db
+          .select({ userId: parentsTable.userId })
+          .from(parentsTable)
+          .where(eq(parentsTable.id, dto.linkedRecordId))
+          .limit(1);
+        existingUserId = parent?.userId ?? null;
+      }
+
+      if (existingUserId) {
+        const [existingUser] = await this.databaseService.db
+          .select(safeColumns)
+          .from(usersTable)
+          .where(eq(usersTable.id, existingUserId))
+          .limit(1);
+        if (existingUser) {
+          // Reset password on the existing account.
+          const firstName = dto.name.trim().split(/\s+/)[0] || "User";
+          const password = `${firstName.charAt(0).toUpperCase()}${firstName.slice(1)}@2026`;
+          await this.databaseService.db
+            .update(usersTable)
+            .set({ password: await this.hashService.hash(password), updatedAt: new Date() })
+            .where(eq(usersTable.id, existingUserId));
+          return {
+            user: existingUser,
+            username: existingUser.username,
+            password,
+            role: dto.role as "Teacher" | "Parent",
+          };
+        }
+      }
+    }
+
+    // ── New account creation ──
     // Build a unique username and a readable, shareable password.
     const base = dto.name.trim().toLowerCase().replace(/[^a-z]+/g, "");
     const suffix = Math.floor(10 + Math.random() * 90);
@@ -194,7 +241,6 @@ export class UserService {
     if (clash?.username === username) throw new ConflictException("Username collision, please try again");
 
     // 1. Create the user account.
-    const { password: _pw, ...safeColumns } = getTableColumns(usersTable);
     const [user] = await this.databaseService.db
       .insert(usersTable)
       .values({
