@@ -1,6 +1,6 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
-import { PERMISSION_KEY, type PermissionRequirement } from "middleware/permission.decorator";
+import { PERMISSION_KEY, SKIP_PERMISSION_KEY, type PermissionRequirement } from "middleware/permission.decorator";
 import { RoleService } from "modules/role/role.service";
 import type { UserRole } from "models/users";
 
@@ -17,6 +17,12 @@ export class PermissionGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const skip = this.reflector.getAllAndOverride<boolean>(SKIP_PERMISSION_KEY, [
+      context.getHandler(),
+      context.getClass()
+    ]);
+    if (skip) return true;
+
     const requirement = this.reflector.getAllAndOverride<PermissionRequirement>(PERMISSION_KEY, [
       context.getHandler(),
       context.getClass()

@@ -10,3 +10,6 @@ export interface PermissionRequirement {
 
 export const RequirePermission = (module: string, action: PermissionAction) =>
   SetMetadata(PERMISSION_KEY, { module, action } satisfies PermissionRequirement);
+
+export const SKIP_PERMISSION_KEY = "skipPermission";
+export const SkipPermission = () => SetMetadata(SKIP_PERMISSION_KEY, true);

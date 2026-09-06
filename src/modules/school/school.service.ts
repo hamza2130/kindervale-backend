@@ -232,16 +232,17 @@ export class SchoolService {
   async uploadDocument(file: any, dto: CreateDocumentDto, uploadedBy?: string) {
     if (!file?.buffer || !file?.originalname) throw new BadRequestException("File is required");
 
-    const fileId = createId();
     const originalName = basename(String(file.originalname));
-    const filename = `${fileId}${extname(originalName)}`;
-    const storageDir = join(process.cwd(), "storage", "documents");
-    await mkdir(storageDir, { recursive: true });
-    await writeFile(join(storageDir, filename), file.buffer);
+    const mimeType = file.mimetype || "application/octet-stream";
+
+    // Store file content as a data: URL in the database so it survives
+    // container restarts (Render free tier has ephemeral filesystem).
+    const base64 = Buffer.from(file.buffer).toString("base64");
+    const dataUrl = `data:${mimeType};base64,${base64}`;
 
     const metadata = {
       originalName,
-      mimeType: file.mimetype || "application/octet-stream",
+      mimeType,
       size: file.size,
       activity: dto.activity,
       caption: dto.caption,
@@ -258,7 +259,7 @@ export class SchoolService {
       {
         ...dto,
         title: dto.title || originalName,
-        fileUrl: `/storage/documents/${filename}`,
+        fileUrl: dataUrl,
         description: JSON.stringify(metadata)
       },
       uploadedBy
@@ -279,10 +280,22 @@ export class SchoolService {
   async streamDocument(id: string, response: Response) {
     const document = await this.getDocument(id);
     const metadata = this.parseDocumentMetadata(document.description);
-    const filePath = join(process.cwd(), document.fileUrl.replace(/^\/?storage[\\/]/, "storage/"));
-    response.setHeader("Content-Type", metadata.mimeType || "application/octet-stream");
-    response.setHeader("Content-Disposition", `inline; filename="${metadata.originalName || document.title}"`);
-    createReadStream(filePath).pipe(response);
+    const contentType = metadata.mimeType || "application/octet-stream";
+    const fileName = metadata.originalName || document.title;
+
+    response.setHeader("Content-Type", contentType);
+    response.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
+
+    if (document.fileUrl.startsWith("data:")) {
+      const commaIdx = document.fileUrl.indexOf(",");
+      const base64 = commaIdx >= 0 ? document.fileUrl.slice(commaIdx + 1) : "";
+      const buffer = Buffer.from(base64, "base64");
+      response.setHeader("Content-Length", String(buffer.length));
+      response.end(buffer);
+    } else {
+      const filePath = join(process.cwd(), document.fileUrl.replace(/^\/?storage[\\/]/, "storage/"));
+      createReadStream(filePath).pipe(response);
+    }
   }
 
   updateDocument(id: string, dto: UpdateDocumentDto) {

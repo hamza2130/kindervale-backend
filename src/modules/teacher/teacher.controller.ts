@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ParamDto } from "common/common.dto";
 import { AuthGuard } from "middleware/auth.guard";
-import { RequirePermission } from "middleware/permission.decorator";
+import { RequirePermission, SkipPermission } from "middleware/permission.decorator";
 import { PermissionGuard } from "middleware/permission.guard";
 import { User } from "middleware/user.decorator";
 import { CreateTeacherDto, TeacherListQueryDto, UpdateTeacherDto } from "modules/teacher/teacher.dto";
@@ -26,12 +26,14 @@ export class TeacherController {
     return { data: teachers };
   }
 
+  @SkipPermission()
   @Get("me")
   async getMyTeacherProfile(@User("userId") userId: string) {
     const teacher = await this.teacherService.getTeacherByUserId(userId);
     return { data: teacher };
   }
 
+  @SkipPermission()
   @Patch("me")
   async updateMyTeacherProfile(@User("userId") userId: string, @Body() dto: UpdateTeacherDto) {
     const teacher = await this.teacherService.updateTeacherByUserId(userId, dto);
