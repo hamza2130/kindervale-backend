@@ -1,5 +1,6 @@
+import { staffAttendanceTable } from "models/school";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, eq, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, lte, type SQL } from "drizzle-orm";
 import { ParamDto } from "common/common.dto";
 import { createId } from "@paralleldrive/cuid2";
 import { type Response } from "express";
@@ -802,4 +803,52 @@ export class SchoolService {
     }
     return dates;
   }
+
+  // ── Staff Attendance ─────────────────────────────────────────
+  async getStaffAttendance(query: { date?: string; teacherId?: string; fromDate?: string; toDate?: string }) {
+    const conditions: SQL[] = [];
+    if (query.teacherId) conditions.push(eq(staffAttendanceTable.teacherId, query.teacherId));
+    if (query.date) conditions.push(eq(staffAttendanceTable.date, query.date));
+    if (query.fromDate) conditions.push(gte(staffAttendanceTable.date, query.fromDate));
+    if (query.toDate) conditions.push(lte(staffAttendanceTable.date, query.toDate));
+    const where = conditions.length ? and(...conditions) : undefined;
+
+    const items = await this.databaseService.db
+      .select()
+      .from(staffAttendanceTable)
+      .where(where)
+      .orderBy(desc(staffAttendanceTable.date));
+
+    return { items };
+  }
+
+  async bulkMarkStaffAttendance(dto: { date: string; records: { teacherId: string; status: string; remarks?: string }[] }, markedBy?: string) {
+    const date = dto.date.slice(0, 10);
+    const results: any[] = [];
+
+    for (const rec of dto.records) {
+      const [existing] = await this.databaseService.db
+        .select({ id: staffAttendanceTable.id })
+        .from(staffAttendanceTable)
+        .where(and(eq(staffAttendanceTable.teacherId, rec.teacherId), eq(staffAttendanceTable.date, date)))
+        .limit(1);
+
+      if (existing) {
+        const [updated] = await this.databaseService.db
+          .update(staffAttendanceTable)
+          .set({ status: rec.status as any, remarks: rec.remarks, markedBy, updatedAt: new Date() })
+          .where(eq(staffAttendanceTable.id, existing.id))
+          .returning();
+        results.push(updated);
+      } else {
+        const [created] = await this.databaseService.db
+          .insert(staffAttendanceTable)
+          .values({ teacherId: rec.teacherId, date, status: rec.status as any, remarks: rec.remarks, markedBy })
+          .returning();
+        results.push(created);
+      }
+    }
+    return results;
+  }
+
 }

@@ -113,6 +113,20 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
         )
       `);
 
+      await this.db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "staff_attendance" (
+          "id" text PRIMARY KEY NOT NULL,
+          "teacher_id" text NOT NULL REFERENCES "teachers"("id") ON DELETE CASCADE,
+          "date" date NOT NULL,
+          "status" "teacher_attendance" NOT NULL DEFAULT 'PRESENT',
+          "remarks" text,
+          "marked_by" text REFERENCES "users"("id") ON DELETE SET NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL,
+          "updated_at" timestamp DEFAULT now() NOT NULL,
+          CONSTRAINT "staff_attendance_teacher_date_unique" UNIQUE ("teacher_id", "date")
+        )
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);

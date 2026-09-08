@@ -1,5 +1,6 @@
 import cuid from "common/cuid";
 import usersTable from "models/users";
+import teachersTable, { teacherAttendanceEnum } from "models/teachers";
 import { date, integer, numeric, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 export const feeStatusEnum = pgEnum("fee_status", ["PAID", "PENDING", "PARTIAL"]);
@@ -391,6 +392,22 @@ export type Student = typeof studentsTable.$inferSelect;
 export type ClassRoom = typeof classesTable.$inferSelect;
 export type Section = typeof sectionsTable.$inferSelect;
 export type Subject = typeof subjectsTable.$inferSelect;
+// Staff/Teacher daily attendance records
+export const staffAttendanceTable = pgTable("staff_attendance", {
+  id: cuid().primaryKey(),
+  teacherId: text()
+    .notNull()
+    .references(() => teachersTable.id, { onDelete: "cascade" }),
+  date: date().notNull(),
+  status: teacherAttendanceEnum().notNull().default("PRESENT"),
+  remarks: text(),
+  markedBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp().defaultNow().notNull(),
+  updatedAt: timestamp().defaultNow().notNull()
+});
+
+export type StaffAttendance = typeof staffAttendanceTable.$inferSelect;
+
 export type Attendance = typeof attendanceTable.$inferSelect;
 export type Fee = typeof feesTable.$inferSelect;
 export type Exam = typeof examsTable.$inferSelect;

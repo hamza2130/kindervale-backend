@@ -571,4 +571,17 @@ export class SchoolController {
   async upsertSettings(@Body() dto: UpsertSettingsDto) {
     return { data: await this.schoolService.upsertSettings(dto) };
   }
+
+  @RequirePermission("teachers", "READ")
+  @Get("staff-attendance")
+  async getStaffAttendance(@Query() query: any) {
+    return { data: await this.schoolService.getStaffAttendance(query) };
+  }
+
+  @RequirePermission("teachers", "UPDATE")
+  @Post("staff-attendance/bulk")
+  async bulkMarkStaffAttendance(@Body() dto: any, @User("userId") userId: string) {
+    return { data: await this.schoolService.bulkMarkStaffAttendance(dto, userId) };
+  }
+
 }

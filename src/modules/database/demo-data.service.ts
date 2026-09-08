@@ -6,8 +6,10 @@ import {
   expensesTable,
   feesTable,
   studentsTable,
+  staffAttendanceTable,
 } from "models/school";
 import usersTable from "models/users";
+import teachersTable from "models/teachers";
 import { DatabaseService } from "modules/database/database.service";
 
 @Injectable()
@@ -22,6 +24,7 @@ export class DemoDataService implements OnApplicationBootstrap {
       await this.seedStudents();
       await this.seedFees();
       await this.seedExpenses();
+      await this.seedStaffAttendance();
     } catch (error) {
       this.logger.warn("Demo data seeding skipped: " + (error as Error).message);
     }
@@ -159,4 +162,36 @@ export class DemoDataService implements OnApplicationBootstrap {
     }
     this.logger.log(`Seeded ${expenses.length} expense records`);
   }
+
+  private async seedStaffAttendance() {
+    const [{ total }] = await this.databaseService.db
+      .select({ total: count() })
+      .from(staffAttendanceTable);
+    if (total > 0) return;
+
+    const teachers = await this.databaseService.db.select().from(teachersTable);
+    if (!teachers.length) return;
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    let seeded = 0;
+
+    for (const teacher of teachers) {
+      for (let day = 1; day <= now.getDate(); day++) {
+        const dow = new Date(year, month, day).getDay();
+        if (dow === 0 || dow === 6) continue;
+        const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const rand = Math.random();
+        const status = rand > 0.9 ? "ABSENT" : rand > 0.8 ? "LATE" : "PRESENT";
+        await this.databaseService.db
+          .insert(staffAttendanceTable)
+          .values({ id: createId(), teacherId: teacher.id, date: dateStr, status })
+          .onConflictDoNothing();
+        seeded++;
+      }
+    }
+    this.logger.log(`Seeded ${seeded} staff attendance records`);
+  }
+
 }
