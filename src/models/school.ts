@@ -1,7 +1,7 @@
 import cuid from "common/cuid";
 import usersTable from "models/users";
 import teachersTable, { teacherAttendanceEnum } from "models/teachers";
-import { date, integer, numeric, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { date, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
 
 export const feeStatusEnum = pgEnum("fee_status", ["PAID", "PENDING", "PARTIAL"]);
 export type FeeStatus = (typeof feeStatusEnum.enumValues)[number];
@@ -289,6 +289,11 @@ export const daycareReportsTable = pgTable("daycare_reports", {
   arrival: text(),
   snack: text(),
   departure: text(),
+  // Structured sections from the paper "Child's Daily Report" form that don't map to a single
+  // flat column: meals (breakfast/snack/lunch, each with time/food/quantity), drinks, naps,
+  // diaper changes, and the items-needed checklist. `meals`/`nap`/`snack` above are legacy
+  // free-text columns kept only so older rows still read back; new rows write here instead.
+  details: jsonb(),
   createdBy: text().references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
