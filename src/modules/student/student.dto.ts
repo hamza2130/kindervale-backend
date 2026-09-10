@@ -27,10 +27,13 @@ export class CreateStudentDto {
   @Trim()
   className: string;
 
+  // Daycare children (Infant/Toddler rooms) have their age collected in months rather than
+  // years, so this bound has to be wide enough to cover both units (e.g. a 2-month-old infant,
+  // or an 18-year-old in the regular preschool).
   @Type(() => Number)
   @IsInt({ message: "Age must be an integer" })
-  @Min(2, { message: "Age must be at least 2" })
-  @Max(18, { message: "Age cannot exceed 18" })
+  @Min(0, { message: "Age cannot be negative" })
+  @Max(216, { message: "Age cannot exceed 216" })
   age: number;
 
   @IsOptional()
@@ -85,7 +88,8 @@ export class UpdateStudentDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: "Age must be an integer" })
-  @Min(1, { message: "Age must be at least 1" })
+  @Min(0, { message: "Age cannot be negative" })
+  @Max(216, { message: "Age cannot exceed 216" })
   age?: number;
 
   @IsOptional()
