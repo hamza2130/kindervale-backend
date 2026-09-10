@@ -61,7 +61,8 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "mood" text,
           ADD COLUMN IF NOT EXISTS "arrival" text,
           ADD COLUMN IF NOT EXISTS "snack" text,
-          ADD COLUMN IF NOT EXISTS "departure" text
+          ADD COLUMN IF NOT EXISTS "departure" text,
+          ADD COLUMN IF NOT EXISTS "details" jsonb
       `);
 
       await this.db.execute(sql`

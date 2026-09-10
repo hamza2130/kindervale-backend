@@ -1,6 +1,6 @@
 import { PartialType } from "@nestjs/mapped-types";
 import { Type } from "class-transformer";
-import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, Matches, Min } from "class-validator";
+import { IsDateString, IsEnum, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Matches, Min } from "class-validator";
 import { Trim } from "common/transformer";
 import {
   documentTypeEnum,
@@ -421,8 +421,7 @@ export class CreateDaycareReportDto {
   notes?: string;
 
   @IsOptional()
-  @IsString()
-  @Trim()
+  @IsIn(["Happy", "Average", "Fussy", "Sick"], { message: "Mood must be one of: Happy, Average, Fussy, Sick" })
   mood?: string;
 
   @IsOptional()
@@ -439,6 +438,13 @@ export class CreateDaycareReportDto {
   @IsString()
   @Trim()
   departure?: string;
+
+  // Structured "Today I ate / drank / napped / diaper changes / items needed" sections from the
+  // paper daily-report form. Loosely typed on purpose — this mirrors the rest of this file's
+  // pragmatic style rather than adding a deep nested-DTO hierarchy for a handful of sub-fields.
+  @IsOptional()
+  @IsObject()
+  details?: Record<string, unknown>;
 }
 
 export class UpdateDaycareReportDto extends PartialType(CreateDaycareReportDto) {}
