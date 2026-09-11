@@ -201,6 +201,11 @@ export class UserService {
           .where(eq(usersTable.id, existingUserId))
           .limit(1);
         if (existingUser) {
+          // A family can enrol more children after the parent login already exists, so this
+          // path also links whatever is newly selected instead of only resetting the password.
+          if (dto.role === "Parent" && dto.studentIds?.length) {
+            await this.linkStudentsToParent(dto.studentIds, dto.linkedRecordId);
+          }
           // Reset password on the existing account.
           const firstName = dto.name.trim().split(/\s+/)[0] || "User";
           const password = `${firstName.charAt(0).toUpperCase()}${firstName.slice(1)}@2026`;
@@ -213,6 +218,7 @@ export class UserService {
             username: existingUser.username,
             password,
             role: dto.role as "Teacher" | "Parent",
+            linkedStudentIds: dto.studentIds ?? [],
           };
         }
       }
@@ -278,29 +284,45 @@ export class UserService {
 
     // 3. ...then link every selected student to this parent.
     const ids = dto.studentIds ?? [];
+    await this.linkStudentsToParent(ids, parent.id);
+
+    return { user, parent, username, password, role: "Parent" as const, linkedStudentIds: ids };
+  }
+
+  /**
+   * Points the given students at `parentId`. A parent may have any number of children, but a
+   * child has exactly one parent — so students already linked to a *different* parent are
+   * rejected rather than silently reassigned (that would revoke the other parent's access
+   * with nothing in the UI to show for it). Students already linked here are left alone, which
+   * is what makes this safe to call again when a family enrols another child.
+   */
+  private async linkStudentsToParent(ids: string[], parentId: string) {
+    if (!ids.length) return;
+
     const found = await this.databaseService.db
       .select({ id: studentsTable.id, parentId: studentsTable.parentId, name: studentsTable.name })
       .from(studentsTable)
       .where(inArray(studentsTable.id, ids));
+
     if (found.length !== ids.length) {
-      const foundIds = new Set(found.map((s) => s.id));
+      const foundIds = new Set(found.map((student) => student.id));
       const missing = ids.filter((id) => !foundIds.has(id));
       throw new BadRequestException(`Unknown student id(s): ${missing.join(", ")}`);
     }
-    // A student can only have one parent at a time. Silently re-linking an already-linked
-    // student would orphan their existing parent's access without anyone noticing — the admin
-    // has to unlink the child from their current parent first if this is a correction.
-    const alreadyLinked = found.filter((s) => s.parentId);
-    if (alreadyLinked.length) {
+
+    const takenByOther = found.filter((student) => student.parentId && student.parentId !== parentId);
+    if (takenByOther.length) {
       throw new ConflictException(
-        `Already linked to another parent: ${alreadyLinked.map((s) => s.name).join(", ")}. Unlink the child first if this was a mistake.`
+        `Already linked to another parent: ${takenByOther.map((student) => student.name).join(", ")}. Unlink the child first if this was a mistake.`
       );
     }
+
+    const toLink = found.filter((student) => student.parentId !== parentId).map((student) => student.id);
+    if (!toLink.length) return;
+
     await this.databaseService.db
       .update(studentsTable)
-      .set({ parentId: parent.id, updatedAt: new Date() })
-      .where(inArray(studentsTable.id, ids));
-
-    return { user, parent, username, password, role: "Parent" as const, linkedStudentIds: ids };
+      .set({ parentId, updatedAt: new Date() })
+      .where(inArray(studentsTable.id, toLink));
   }
 }
