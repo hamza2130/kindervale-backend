@@ -172,10 +172,6 @@ export class UserService {
   async generateLogin(dto: GenerateLoginDto) {
     const roleUpper: UserRole = dto.role === "Parent" ? "PARENT" : "TEACHER";
 
-    if (dto.role === "Parent" && (!dto.studentIds || dto.studentIds.length === 0)) {
-      throw new BadRequestException("Select at least one child for a parent login");
-    }
-
     const { password: _pw, ...safeColumns } = getTableColumns(usersTable);
 
     // ── Regeneration: if linkedRecordId points to a profile that already has a
@@ -220,6 +216,13 @@ export class UserService {
           };
         }
       }
+    }
+
+    // A brand-new parent account must be linked to at least one child. Existing accounts
+    // (handled by the regeneration branch above) don't re-check this — resetting a password
+    // shouldn't require re-selecting children that are already linked.
+    if (dto.role === "Parent" && (!dto.studentIds || dto.studentIds.length === 0)) {
+      throw new BadRequestException("Select at least one child for a parent login");
     }
 
     // ── New account creation ──
@@ -276,13 +279,22 @@ export class UserService {
     // 3. ...then link every selected student to this parent.
     const ids = dto.studentIds ?? [];
     const found = await this.databaseService.db
-      .select({ id: studentsTable.id })
+      .select({ id: studentsTable.id, parentId: studentsTable.parentId, name: studentsTable.name })
       .from(studentsTable)
       .where(inArray(studentsTable.id, ids));
     if (found.length !== ids.length) {
       const foundIds = new Set(found.map((s) => s.id));
       const missing = ids.filter((id) => !foundIds.has(id));
       throw new BadRequestException(`Unknown student id(s): ${missing.join(", ")}`);
+    }
+    // A student can only have one parent at a time. Silently re-linking an already-linked
+    // student would orphan their existing parent's access without anyone noticing — the admin
+    // has to unlink the child from their current parent first if this is a correction.
+    const alreadyLinked = found.filter((s) => s.parentId);
+    if (alreadyLinked.length) {
+      throw new ConflictException(
+        `Already linked to another parent: ${alreadyLinked.map((s) => s.name).join(", ")}. Unlink the child first if this was a mistake.`
+      );
     }
     await this.databaseService.db
       .update(studentsTable)
