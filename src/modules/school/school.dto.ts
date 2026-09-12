@@ -355,6 +355,47 @@ export class CreateExpenseDto {
 
 export class UpdateExpenseDto extends PartialType(CreateExpenseDto) {}
 
+export class CreateIncomeDto {
+  @IsString()
+  @Trim()
+  title: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  category?: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amount: number;
+
+  /** Date the money was received. */
+  @IsDateString()
+  date: string;
+
+  /** Inclusive range the payment covers — omit both for a one-off receipt. */
+  @IsOptional()
+  @IsDateString()
+  periodStart?: string;
+
+  @IsOptional()
+  @IsDateString()
+  periodEnd?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  portal?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  notes?: string;
+}
+
+export class UpdateIncomeDto extends PartialType(CreateIncomeDto) {}
+
 export class CreateFaqDto {
   @IsString()
   @Trim()
