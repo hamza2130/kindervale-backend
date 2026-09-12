@@ -128,6 +128,32 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
         )
       `);
 
+      // Money received, recorded as a ledger entry rather than an invoice. Daycare is not
+      // billed per child -- one lump sum arrives every two months covering everyone -- and
+      // the fees table cannot hold that, since student_id is required there and every row is
+      // a unique invoice. This is the counterpart to "expenses": same shape, opposite
+      // direction. Mirrors scripts/migrations/20260912_add_income_ledger.sql.
+      await this.db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "income" (
+          "id" text PRIMARY KEY NOT NULL,
+          "title" text NOT NULL,
+          "category" text NOT NULL DEFAULT 'Fee Collection',
+          "amount" numeric(10, 2) NOT NULL,
+          "date" date NOT NULL,
+          "period_start" date,
+          "period_end" date,
+          "portal" text NOT NULL DEFAULT 'Daycare',
+          "notes" text,
+          "created_by" text REFERENCES "users"("id") ON DELETE SET NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL,
+          "updated_at" timestamp DEFAULT now() NOT NULL
+        )
+      `);
+
+      await this.db.execute(sql`
+        CREATE INDEX IF NOT EXISTS "income_portal_date_idx" ON "income" ("portal", "date")
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);

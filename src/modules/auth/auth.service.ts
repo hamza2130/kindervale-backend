@@ -49,25 +49,31 @@ export class AuthService {
   async login(dto: LoginDto) {
     const role = normalizePortalRole(dto.role) as PortalRole;
     const loginId = (dto.email ?? dto.username ?? "").trim();
-    console.log("[auth.login] Login request received", {
-      role: dto.role,
-      normalizedRole: role,
-      username: dto.username ?? dto.email,
-      loginId,
-      otpProvided: Boolean(dto.otp),
-      requiresOtp: role === "admin" || role === "daycare_admin" || role === "principal"
-    });
+    const isProduction = process.env.NODE_ENV === "production";
 
     const requiresOtp = role === "admin" || role === "daycare_admin" || role === "principal";
     if (requiresOtp) {
-      const expectedLoginOtp = process.env.LOGIN_OTP ?? "0000";
-      const isOtpValid = dto.otp === "0000" || dto.otp === expectedLoginOtp;
-      console.log("[auth.login] OTP comparison result:", isOtpValid);
-      if (!isOtpValid) {
+      // The demo code used to be accepted unconditionally *alongside* LOGIN_OTP
+      // (`otp === "0000" || otp === expected`), so configuring a real secret did not switch it
+      // off — the published "0000" stayed valid forever. It is now only the fallback for when
+      // nothing is configured, so setting LOGIN_OTP genuinely replaces it.
+      //
+      // Deliberately not throwing when LOGIN_OTP is unset: this runs against a live school,
+      // and failing closed on a missing variable would lock every admin out on deploy. It
+      // warns instead, and the fallback disappears the moment the variable is set.
+      const expectedLoginOtp = process.env.LOGIN_OTP;
+      if (!expectedLoginOtp && isProduction) {
+        console.warn("[auth] LOGIN_OTP is not set — falling back to the public demo code. Set it.");
+      }
+      if (dto.otp !== (expectedLoginOtp ?? "0000")) {
         throw new UnauthorizedException("Invalid OTP");
       }
-    } else {
-      console.log("[auth.login] OTP not required for role:", role);
+    }
+
+    // Hands out a valid admin token for any credentials. Useful locally, catastrophic if the
+    // variable ever reaches the deployed environment — so it refuses to run there.
+    if (process.env.DEV_AUTH_BYPASS === "true" && isProduction) {
+      throw new UnauthorizedException("DEV_AUTH_BYPASS cannot be used in production");
     }
 
     if (process.env.DEV_AUTH_BYPASS === "true") {
@@ -97,20 +103,16 @@ export class AuthService {
     }
 
     const expectedUserRole = portalRoleToUserRole[role];
-    console.log("[auth.login] Selected table:", "users");
     const [user] = await this.databaseService.db
       .select()
       .from(usersTable)
       .where(or(eq(usersTable.email, loginId), eq(usersTable.username, loginId)))
       .limit(1);
 
-    console.log("[auth.login] User found:", Boolean(user));
     if (!user) {
       throw new UnauthorizedException("User not found");
     }
 
-    console.log("[auth.login] Stored role:", user.role);
-    console.log("[auth.login] Stored username:", user.username);
     if (user.role !== expectedUserRole) {
       throw new UnauthorizedException("Role mismatch");
     }
@@ -120,7 +122,6 @@ export class AuthService {
     }
 
     const isPasswordValid = await this.hashService.compare(dto.password, user.password);
-    console.log("[auth.login] Password comparison result:", isPasswordValid);
     if (!isPasswordValid) {
       throw new UnauthorizedException("Invalid password");
     }

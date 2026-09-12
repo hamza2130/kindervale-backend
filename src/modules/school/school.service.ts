@@ -17,6 +17,7 @@ import {
   documentsTable,
   examsTable,
   expensesTable,
+  incomeTable,
   faqsTable,
   feesTable,
   leaveRequestsTable,
@@ -42,6 +43,7 @@ import {
   CreateDocumentDto,
   CreateExamDto,
   CreateExpenseDto,
+  CreateIncomeDto,
   CreateFaqDto,
   CreateFeeDto,
   CreateLeaveRequestDto,
@@ -60,6 +62,7 @@ import {
   UpdateDocumentDto,
   UpdateExamDto,
   UpdateExpenseDto,
+  UpdateIncomeDto,
   UpdateFaqDto,
   UpdateFeeDto,
   UpdateLeaveRequestDto,
@@ -422,6 +425,26 @@ export class SchoolService {
 
   deleteExpense(id: string) {
     return this.delete(expensesTable, id, "Expense");
+  }
+
+  createIncome(dto: CreateIncomeDto, createdBy?: string) {
+    return this.insert(incomeTable, { ...dto, amount: dto.amount.toString(), createdBy }, "income");
+  }
+
+  getIncome() {
+    return this.databaseService.db.select().from(incomeTable);
+  }
+
+  getIncomeEntry(id: string) {
+    return this.findOne(incomeTable, id, "Income entry");
+  }
+
+  updateIncome(id: string, dto: UpdateIncomeDto) {
+    return this.update(incomeTable, id, { ...dto, amount: dto.amount?.toString() }, "Income entry");
+  }
+
+  deleteIncome(id: string) {
+    return this.delete(incomeTable, id, "Income entry");
   }
 
   createFaq(dto: CreateFaqDto) {

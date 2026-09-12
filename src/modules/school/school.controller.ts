@@ -14,6 +14,7 @@ import {
   CreateDocumentDto,
   CreateExamDto,
   CreateExpenseDto,
+  CreateIncomeDto,
   CreateFaqDto,
   CreateFeeDto,
   CreateLeaveRequestDto,
@@ -32,6 +33,7 @@ import {
   UpdateDocumentDto,
   UpdateExamDto,
   UpdateExpenseDto,
+  UpdateIncomeDto,
   UpdateFaqDto,
   UpdateFeeDto,
   UpdateLeaveRequestDto,
@@ -341,6 +343,37 @@ export class SchoolController {
   async deleteLeaveRequest(@Param() { id }: ParamDto) {
     await this.schoolService.deleteLeaveRequest(id);
     return { message: "Leave request deleted successfully" };
+  }
+
+  @RequirePermission("settings", "MANAGE")
+  @Post("income")
+  async createIncome(@Body() dto: CreateIncomeDto, @User("userId") userId: string) {
+    return { data: await this.schoolService.createIncome(dto, userId) };
+  }
+
+  @RequirePermission("settings", "READ")
+  @Get("income")
+  async getIncome() {
+    return { data: await this.schoolService.getIncome() };
+  }
+
+  @RequirePermission("settings", "READ")
+  @Get("income/:id")
+  async getIncomeEntry(@Param() { id }: ParamDto) {
+    return { data: await this.schoolService.getIncomeEntry(id) };
+  }
+
+  @RequirePermission("settings", "MANAGE")
+  @Patch("income/:id")
+  async updateIncome(@Param() { id }: ParamDto, @Body() dto: UpdateIncomeDto) {
+    return { data: await this.schoolService.updateIncome(id, dto) };
+  }
+
+  @RequirePermission("settings", "MANAGE")
+  @Delete("income/:id")
+  async deleteIncome(@Param() { id }: ParamDto) {
+    await this.schoolService.deleteIncome(id);
+    return { message: "Income entry deleted successfully" };
   }
 
   @RequirePermission("settings", "MANAGE")

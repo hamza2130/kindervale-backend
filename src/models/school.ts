@@ -253,6 +253,36 @@ export const expensesTable = pgTable("expenses", {
   updatedAt: timestamp().defaultNow().notNull()
 });
 
+/**
+ * Money received, recorded as a ledger entry rather than an invoice.
+ *
+ * Daycare is not billed per child — a single lump sum arrives every two months covering
+ * everyone, and it is entered by hand. The fees table cannot hold that: `studentId` is
+ * required there and every row is a unique invoice, so a pooled payment has no child to
+ * attach to. This is the counterpart to `expenses` — same shape, opposite direction — which
+ * keeps "money in" and "money out" symmetrical and reportable over the same date ranges.
+ *
+ * `periodStart`/`periodEnd` describe what the payment covers (e.g. Sep–Oct), which is not
+ * necessarily the day it landed (`date`).
+ */
+export const incomeTable = pgTable("income", {
+  id: cuid().primaryKey(),
+  title: text().notNull(),
+  category: text().default("Fee Collection").notNull(),
+  amount: numeric({ precision: 10, scale: 2 }).notNull(),
+  /** Date the money was received. */
+  date: date().notNull(),
+  /** Inclusive range the payment covers; both null for one-off receipts. */
+  periodStart: date(),
+  periodEnd: date(),
+  /** "Kindervale" or "Daycare" — keeps the two portals' finances separate. */
+  portal: text().default("Daycare").notNull(),
+  notes: text(),
+  createdBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp().defaultNow().notNull(),
+  updatedAt: timestamp().defaultNow().notNull()
+});
+
 export const faqsTable = pgTable("faqs", {
   id: cuid().primaryKey(),
   question: text().notNull(),
