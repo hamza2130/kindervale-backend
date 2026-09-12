@@ -154,6 +154,15 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
         CREATE INDEX IF NOT EXISTS "income_portal_date_idx" ON "income" ("portal", "date")
       `);
 
+      // expenses had no way to tell a Daycare expense from a Kindervale one -- the frontend
+      // hardcoded "Kindervale" on every row it displayed, which silently hid every expense from
+      // Daycare Admin's view (filtered to portal === "Daycare", so it always matched nothing).
+      // Defaults existing rows to "Kindervale" so they keep showing exactly where they already did.
+      await this.db.execute(sql`
+        ALTER TABLE "expenses"
+          ADD COLUMN IF NOT EXISTS "portal" text NOT NULL DEFAULT 'Kindervale'
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);

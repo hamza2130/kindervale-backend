@@ -248,6 +248,11 @@ export const expensesTable = pgTable("expenses", {
   amount: numeric({ precision: 10, scale: 2 }).notNull(),
   date: date().notNull(),
   notes: text(),
+  // Had no way to tell a Daycare expense from a Kindervale one at all -- the frontend hardcoded
+  // "Kindervale" on every row it displayed, which silently hid every expense from Daycare Admin
+  // (their view filters to portal === "Daycare", so it always matched zero rows). Defaults to
+  // "Kindervale" so existing untagged rows keep showing where they already did.
+  portal: text().default("Kindervale").notNull(),
   createdBy: text().references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
