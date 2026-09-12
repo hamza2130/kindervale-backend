@@ -16,8 +16,7 @@
     "debug": "nest start --debug --watch",
     "dev": "nest start --watch",
     "build": "nest build",
-    "start": "node dist/src/main",
-    "db:migrate": "node -r ts-node/register -r tsconfig-paths/register scripts/run-migrations.ts"
+    "start": "node dist/src/main"
   },
   "dependencies": {
     "@getbrevo/brevo": "^5.0.4",
