@@ -64,14 +64,14 @@ export class SchoolController {
 
   @RequirePermission("fees", "READ")
   @Get("fees")
-  async getFees() {
-    return { data: await this.schoolService.getFees() };
+  async getFees(@User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getFees({ userId, role }) };
   }
 
   @RequirePermission("fees", "READ")
   @Get("fees/:id")
-  async getFee(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getFee(id) };
+  async getFee(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getFee(id, { userId, role }) };
   }
 
   @RequirePermission("fees", "UPDATE")
@@ -126,14 +126,14 @@ export class SchoolController {
 
   @RequirePermission("report-cards", "READ")
   @Get("report-cards")
-  async getReportCards() {
-    return { data: await this.schoolService.getReportCards() };
+  async getReportCards(@User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getReportCards({ userId, role }) };
   }
 
   @RequirePermission("report-cards", "READ")
   @Get("report-cards/:id")
-  async getReportCard(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getReportCard(id) };
+  async getReportCard(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getReportCard(id, { userId, role }) };
   }
 
   @RequirePermission("report-cards", "UPDATE")
@@ -477,14 +477,14 @@ export class SchoolController {
 
   @RequirePermission("daycare-reports", "READ")
   @Get("daycare-reports")
-  async getDaycareReports() {
-    return { data: await this.schoolService.getDaycareReports() };
+  async getDaycareReports(@User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getDaycareReports({ userId, role }) };
   }
 
   @RequirePermission("daycare-reports", "READ")
   @Get("daycare-reports/:id")
-  async getDaycareReport(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getDaycareReport(id) };
+  async getDaycareReport(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getDaycareReport(id, { userId, role }) };
   }
 
   @RequirePermission("daycare-reports", "UPDATE")

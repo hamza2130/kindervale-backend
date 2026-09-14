@@ -3,6 +3,7 @@ import { ParamDto } from "common/common.dto";
 import { AuthGuard } from "middleware/auth.guard";
 import { RequirePermission } from "middleware/permission.decorator";
 import { PermissionGuard } from "middleware/permission.guard";
+import { User } from "middleware/user.decorator";
 import { CreateStudentDto, StudentListQueryDto, UpdateStudentDto } from "modules/student/student.dto";
 import { StudentService } from "modules/student/student.service";
 
@@ -19,14 +20,18 @@ export class StudentController {
 
   @RequirePermission("students", "READ")
   @Get()
-  async getStudents(@Query() query: StudentListQueryDto) {
-    return { data: await this.studentService.getStudents(query) };
+  async getStudents(
+    @Query() query: StudentListQueryDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.studentService.getStudents(query, { userId, role }) };
   }
 
   @RequirePermission("students", "READ")
   @Get(":id")
-  async getStudent(@Param() { id }: ParamDto) {
-    return { data: await this.studentService.getStudent(id) };
+  async getStudent(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.studentService.getStudent(id, { userId, role }) };
   }
 
   @RequirePermission("students", "UPDATE")

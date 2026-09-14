@@ -35,11 +35,25 @@ export class StudentService {
     return student;
   }
 
-  async getStudents(query: StudentListQueryDto) {
+  async getStudents(query: StudentListQueryDto, requestingUser?: { userId: string; role: string }) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const offset = (page - 1) * limit;
-    const where = this.buildStudentWhere(query);
+
+    // A parent's own token could read the full roster -- every student's name, class and
+    // admission info -- because this only ever checked whether "students:READ" was granted,
+    // never whose children the caller actually is. The UI hid this by filtering client-side,
+    // but the data still left the server. Force the parentId filter here, overriding whatever
+    // the client sent, so a parent can never see past this by omitting or editing the query.
+    const scopedQuery = { ...query };
+    if (this.normalizeRole(requestingUser?.role) === "PARENT") {
+      const parentRecordId = await this.resolveParentRecordId(requestingUser!.userId);
+      // No linked parent record at all -- show nothing rather than falling through to
+      // "no filter", which would mean every student in the school.
+      scopedQuery.parentId = parentRecordId ?? "__no_parent_record__";
+    }
+
+    const where = this.buildStudentWhere(scopedQuery);
     const sortColumn = studentsTable[query.sortBy ?? "createdAt"];
     const orderBy = query.sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn);
 
@@ -59,9 +73,21 @@ export class StudentService {
     };
   }
 
-  async getStudent(id: string): Promise<Student> {
+  async getStudent(id: string, requestingUser?: { userId: string; role: string }): Promise<Student> {
     const [student] = await this.databaseService.db.select().from(studentsTable).where(eq(studentsTable.id, id)).limit(1);
     if (!student) throw new NotFoundException("Student not found");
+
+    // The list endpoint being scoped doesn't stop a parent requesting any other student's id
+    // directly -- ids aren't secret, a sibling's or a former classmate's is easy to guess or
+    // reuse from an old session. Report it as not found rather than forbidden, so this endpoint
+    // can't be used to probe which ids exist.
+    if (this.normalizeRole(requestingUser?.role) === "PARENT") {
+      const parentRecordId = await this.resolveParentRecordId(requestingUser!.userId);
+      if (!parentRecordId || student.parentId !== parentRecordId) {
+        throw new NotFoundException("Student not found");
+      }
+    }
+
     return student;
   }
 
@@ -111,6 +137,21 @@ export class StudentService {
         .limit(1);
       if (!parent) throw new NotFoundException("Parent not found");
     }
+  }
+
+  /** Tokens carry the lowercase portal role ("parent", "daycare_admin", ...); normalize once. */
+  private normalizeRole(role?: string): string {
+    return (role ?? "").trim().toUpperCase().replace(/[\s-]+/g, "");
+  }
+
+  /** The parents row id for a logged-in parent user, or null if they have none. */
+  private async resolveParentRecordId(userId: string): Promise<string | null> {
+    const [parent] = await this.databaseService.db
+      .select({ id: parentsTable.id })
+      .from(parentsTable)
+      .where(eq(parentsTable.userId, userId))
+      .limit(1);
+    return parent?.id ?? null;
   }
 
   private buildStudentWhere(query: StudentListQueryDto): SQL | undefined {
