@@ -1,6 +1,6 @@
 import { staffAttendanceTable } from "models/school";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, gte, lte, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
 import { ParamDto } from "common/common.dto";
 import { createId } from "@paralleldrive/cuid2";
 import { type Response } from "express";
@@ -111,12 +111,18 @@ export class SchoolService {
     return this.insert(feesTable, { ...dto, amount: dto.amount.toString() }, "fee");
   }
 
-  getFees() {
-    return this.databaseService.db.select().from(feesTable);
+  async getFees(requestingUser?: { userId: string; role: string }) {
+    const rows = await this.databaseService.db.select().from(feesTable);
+    return this.scopeRowsToParent(rows, requestingUser);
   }
 
-  getFee(id: string) {
-    return this.findOne(feesTable, id, "Fee");
+  async getFee(id: string, requestingUser?: { userId: string; role: string }) {
+    const fee = await this.findOne(feesTable, id, "Fee");
+    // Reported as not-found rather than forbidden -- ids aren't secret, and a distinct "you
+    // can't see this one" response would let a parent confirm which invoice ids exist at all.
+    const [scoped] = await this.scopeRowsToParent([fee], requestingUser);
+    if (!scoped) throw new NotFoundException("Fee not found");
+    return scoped;
   }
 
   updateFee(id: string, dto: UpdateFeeDto) {
@@ -151,12 +157,16 @@ export class SchoolService {
     return this.insert(reportCardsTable, { ...dto, createdBy }, "report card");
   }
 
-  getReportCards() {
-    return this.databaseService.db.select().from(reportCardsTable);
+  async getReportCards(requestingUser?: { userId: string; role: string }) {
+    const rows = await this.databaseService.db.select().from(reportCardsTable);
+    return this.scopeRowsToParent(rows, requestingUser);
   }
 
-  getReportCard(id: string) {
-    return this.findOne(reportCardsTable, id, "Report card");
+  async getReportCard(id: string, requestingUser?: { userId: string; role: string }) {
+    const reportCard = await this.findOne(reportCardsTable, id, "Report card");
+    const [scoped] = await this.scopeRowsToParent([reportCard], requestingUser);
+    if (!scoped) throw new NotFoundException("Report card not found");
+    return scoped;
   }
 
   updateReportCard(id: string, dto: UpdateReportCardDto) {
@@ -491,12 +501,16 @@ export class SchoolService {
     return this.insert(daycareReportsTable, { ...dto, createdBy }, "daycare report");
   }
 
-  getDaycareReports() {
-    return this.databaseService.db.select().from(daycareReportsTable);
+  async getDaycareReports(requestingUser?: { userId: string; role: string }) {
+    const rows = await this.databaseService.db.select().from(daycareReportsTable);
+    return this.scopeRowsToParent(rows, requestingUser);
   }
 
-  getDaycareReport(id: string) {
-    return this.findOne(daycareReportsTable, id, "Daycare report");
+  async getDaycareReport(id: string, requestingUser?: { userId: string; role: string }) {
+    const report = await this.findOne(daycareReportsTable, id, "Daycare report");
+    const [scoped] = await this.scopeRowsToParent([report], requestingUser);
+    if (!scoped) throw new NotFoundException("Daycare report not found");
+    return scoped;
   }
 
   updateDaycareReport(id: string, dto: UpdateDaycareReportDto) {
@@ -729,6 +743,44 @@ export class SchoolService {
     const result = await this.databaseService.db.delete(table).where(eq(table.id, id)).returning({ id: table.id });
     if (!result.length) throw new NotFoundException(`${label} not found`);
     return { deleted: true };
+  }
+
+  /** Tokens carry the lowercase portal role ("parent", "daycare_admin", ...); normalize once. */
+  private normalizeRole(role?: string): string {
+    return (role ?? "").trim().toUpperCase().replace(/[\s-]+/g, "");
+  }
+
+  /** Every student id linked to a parent user, or [] if they have no parent record or no children. */
+  private async resolveParentStudentIds(userId: string): Promise<string[]> {
+    const [parent] = await this.databaseService.db
+      .select({ id: parentsTable.id })
+      .from(parentsTable)
+      .where(eq(parentsTable.userId, userId))
+      .limit(1);
+    if (!parent) return [];
+
+    const rows = await this.databaseService.db
+      .select({ id: studentsTable.id })
+      .from(studentsTable)
+      .where(eq(studentsTable.parentId, parent.id));
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Filters an already-fetched list of rows to a parent's own children, by whichever field
+   * carries the student id on that table. Filtering in application code (rather than pushing a
+   * WHERE clause into each call site) keeps this identical across fees/report-cards/daycare-
+   * reports/etc., and these tables are small enough that the extra round trip doesn't matter.
+   * A parent with no linked student sees nothing, never the unfiltered table.
+   */
+  private async scopeRowsToParent<T extends Record<string, unknown>>(
+    rows: T[],
+    requestingUser: { userId: string; role: string } | undefined,
+    studentIdField: keyof T = "studentId" as keyof T
+  ): Promise<T[]> {
+    if (this.normalizeRole(requestingUser?.role) !== "PARENT") return rows;
+    const studentIds = new Set(await this.resolveParentStudentIds(requestingUser!.userId));
+    return rows.filter((row) => studentIds.has(row[studentIdField] as string));
   }
 
   private async applyApprovedStudentLeaveSideEffects(leave: any, actorUserId?: string) {

@@ -351,6 +351,11 @@ export class CreateExpenseDto {
   @IsString()
   @Trim()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  portal?: string;
 }
 
 export class UpdateExpenseDto extends PartialType(CreateExpenseDto) {}
