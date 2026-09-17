@@ -1,9 +1,12 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, notInArray, or, type SQL } from "drizzle-orm";
+import { assertPortalAccess, assertPortalForCreate, callerPortal, DAYCARE_CLASS_NAMES } from "common/portal-scope";
 import teachersTable, { type Teacher } from "models/teachers";
 import usersTable from "models/users";
 import { DatabaseService } from "modules/database/database.service";
 import type { CreateTeacherDto, TeacherListQueryDto, UpdateTeacherDto } from "modules/teacher/teacher.dto";
+
+type RequestingUser = { userId: string; role: string };
 
 /** Shape returned by the teacher list/detail endpoints once joined with users. */
 export type TeacherWithUser = Teacher & {
@@ -15,7 +18,10 @@ export type TeacherWithUser = Teacher & {
 export class TeacherService {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async createTeacher(dto: CreateTeacherDto): Promise<Teacher> {
+  async createTeacher(dto: CreateTeacherDto, requestingUser?: RequestingUser): Promise<Teacher> {
+    // Same gap as students: a Daycare Admin's token had nothing but client-side validation
+    // stopping it creating a Kindervale staff record.
+    assertPortalForCreate(requestingUser?.role, dto.className);
     const [user] = await this.databaseService.db.select().from(usersTable).where(eq(usersTable.id, dto.userId)).limit(1);
 
     if (!user) {
@@ -45,11 +51,11 @@ export class TeacherService {
     return teacher;
   }
 
-  async getTeachers(query: TeacherListQueryDto) {
+  async getTeachers(query: TeacherListQueryDto, requestingUser?: RequestingUser) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const offset = (page - 1) * limit;
-    const where = this.buildTeacherWhere(query);
+    const where = this.applyPortalFilter(this.buildTeacherWhere(query), requestingUser?.role);
     const sortColumn = teachersTable[query.sortBy ?? "createdAt"];
     const orderBy = query.sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn);
 
@@ -89,7 +95,7 @@ export class TeacherService {
     };
   }
 
-  async getTeacher(id: string): Promise<TeacherWithUser> {
+  async getTeacher(id: string, requestingUser?: RequestingUser): Promise<TeacherWithUser> {
     const [teacher] = await this.databaseService.db
       .select({
         id: teachersTable.id,
@@ -113,6 +119,7 @@ export class TeacherService {
     if (!teacher) {
       throw new NotFoundException("Teacher not found");
     }
+    assertPortalAccess(requestingUser?.role, teacher.className, "Teacher not found");
 
     return teacher as TeacherWithUser;
   }
@@ -181,8 +188,23 @@ export class TeacherService {
     return created.id;
   }
 
-  async updateTeacher(id: string, dto: UpdateTeacherDto): Promise<TeacherWithUser> {
+  // requestingUser is only ever passed from the admin-facing PATCH /teachers/:id route.
+  // updateTeacherByUserId's self-service call below deliberately omits it -- a teacher editing
+  // their own profile is never portal-restricted, since it's already their own record by
+  // definition.
+  async updateTeacher(id: string, dto: UpdateTeacherDto, requestingUser?: RequestingUser): Promise<TeacherWithUser> {
     const { name, ...teacherFields } = dto;
+
+    if (requestingUser) {
+      const [existing] = await this.databaseService.db
+        .select({ className: teachersTable.className })
+        .from(teachersTable)
+        .where(eq(teachersTable.id, id))
+        .limit(1);
+      if (!existing) throw new NotFoundException("Teacher not found");
+      assertPortalAccess(requestingUser.role, existing.className, "Teacher not found");
+      if (dto.className !== undefined) assertPortalForCreate(requestingUser.role, dto.className);
+    }
 
     const [teacher] = await this.databaseService.db
       .update(teachersTable)
@@ -228,7 +250,15 @@ export class TeacherService {
     return updatedTeacher as TeacherWithUser;
   }
 
-  async deleteTeacher(id: string): Promise<void> {
+  async deleteTeacher(id: string, requestingUser?: RequestingUser): Promise<void> {
+    const [existing] = await this.databaseService.db
+      .select({ className: teachersTable.className })
+      .from(teachersTable)
+      .where(eq(teachersTable.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException("Teacher not found");
+    assertPortalAccess(requestingUser?.role, existing.className, "Teacher not found");
+
     const [teacher] = await this.databaseService.db
       .delete(teachersTable)
       .where(eq(teachersTable.id, id))
@@ -255,6 +285,17 @@ export class TeacherService {
     }
 
     return conditions.length ? and(...conditions) : undefined;
+  }
+
+  /** Narrows an already-built WHERE clause to the caller's own portal, if their role has one. */
+  private applyPortalFilter(where: SQL | undefined, role?: string): SQL | undefined {
+    const portal = callerPortal(role);
+    if (!portal) return where;
+    const portalCondition =
+      portal === "Daycare"
+        ? inArray(teachersTable.className, [...DAYCARE_CLASS_NAMES])
+        : notInArray(teachersTable.className, [...DAYCARE_CLASS_NAMES]);
+    return where ? and(where, portalCondition) : portalCondition;
   }
 }
 

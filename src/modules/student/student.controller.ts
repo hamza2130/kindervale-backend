@@ -14,8 +14,8 @@ export class StudentController {
 
   @RequirePermission("students", "CREATE")
   @Post()
-  async createStudent(@Body() dto: CreateStudentDto) {
-    return { data: await this.studentService.createStudent(dto) };
+  async createStudent(@Body() dto: CreateStudentDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.studentService.createStudent(dto, { userId, role }) };
   }
 
   @RequirePermission("students", "READ")
@@ -36,14 +36,19 @@ export class StudentController {
 
   @RequirePermission("students", "UPDATE")
   @Patch(":id")
-  async updateStudent(@Param() { id }: ParamDto, @Body() dto: UpdateStudentDto) {
-    return { data: await this.studentService.updateStudent(id, dto) };
+  async updateStudent(
+    @Param() { id }: ParamDto,
+    @Body() dto: UpdateStudentDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.studentService.updateStudent(id, dto, { userId, role }) };
   }
 
   @RequirePermission("students", "DELETE")
   @Delete(":id")
-  async deleteStudent(@Param() { id }: ParamDto) {
-    await this.studentService.deleteStudent(id);
+  async deleteStudent(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    await this.studentService.deleteStudent(id, { userId, role });
     return { message: "Student deleted successfully" };
   }
 }
