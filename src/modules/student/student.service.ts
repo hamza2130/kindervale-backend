@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { createId } from "@paralleldrive/cuid2";
-import { and, asc, count, desc, eq, ilike, ne, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, ne, notInArray, or, type SQL } from "drizzle-orm";
+import { assertPortalAccess, assertPortalForCreate, callerPortal, DAYCARE_CLASS_NAMES } from "common/portal-scope";
 import { parentsTable, studentsTable, type Student } from "models/school";
 import usersTable from "models/users";
 import { DatabaseService } from "modules/database/database.service";
@@ -10,7 +11,11 @@ import type { CreateStudentDto, StudentListQueryDto, UpdateStudentDto } from "mo
 export class StudentService {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async createStudent(dto: CreateStudentDto): Promise<Student> {
+  async createStudent(dto: CreateStudentDto, requestingUser?: { userId: string; role: string }): Promise<Student> {
+    // A Daycare Admin's token had nothing stopping it creating (or, below, editing/deleting) a
+    // Kindervale student -- confirmed live, the request reached the database and only client-
+    // side validation ever stood in the way. Reject before anything is written.
+    assertPortalForCreate(requestingUser?.role, dto.className);
     await this.validateRelations(dto.userId, dto.parentId);
     let admissionNo = dto.admissionNo?.trim() || "";
     if (!admissionNo) {
@@ -53,7 +58,10 @@ export class StudentService {
       scopedQuery.parentId = parentRecordId ?? "__no_parent_record__";
     }
 
-    const where = this.buildStudentWhere(scopedQuery);
+    // Confined the same way createStudent now is: an Admin's own roster request should never
+    // include Daycare children, and vice versa, regardless of what className filter (if any)
+    // the client asked for.
+    const where = this.applyPortalFilter(this.buildStudentWhere(scopedQuery), requestingUser?.role);
     const sortColumn = studentsTable[query.sortBy ?? "createdAt"];
     const orderBy = query.sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn);
 
@@ -87,11 +95,28 @@ export class StudentService {
         throw new NotFoundException("Student not found");
       }
     }
+    assertPortalAccess(requestingUser?.role, student.className, "Student not found");
 
     return student;
   }
 
-  async updateStudent(id: string, dto: UpdateStudentDto): Promise<Student> {
+  async updateStudent(
+    id: string,
+    dto: UpdateStudentDto,
+    requestingUser?: { userId: string; role: string }
+  ): Promise<Student> {
+    const [existing] = await this.databaseService.db
+      .select({ className: studentsTable.className })
+      .from(studentsTable)
+      .where(eq(studentsTable.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException("Student not found");
+    assertPortalAccess(requestingUser?.role, existing.className, "Student not found");
+    // A className change has to land in the same portal the caller is confined to -- otherwise
+    // an Admin could "move" a student into the Daycare roster (or out of it) despite never
+    // being allowed to touch a Daycare record at all.
+    if (dto.className !== undefined) assertPortalForCreate(requestingUser?.role, dto.className);
+
     await this.validateRelations(dto.userId, dto.parentId);
 
     if (dto.admissionNo) {
@@ -114,7 +139,15 @@ export class StudentService {
     return student;
   }
 
-  async deleteStudent(id: string): Promise<void> {
+  async deleteStudent(id: string, requestingUser?: { userId: string; role: string }): Promise<void> {
+    const [existing] = await this.databaseService.db
+      .select({ className: studentsTable.className })
+      .from(studentsTable)
+      .where(eq(studentsTable.id, id))
+      .limit(1);
+    if (!existing) throw new NotFoundException("Student not found");
+    assertPortalAccess(requestingUser?.role, existing.className, "Student not found");
+
     const [student] = await this.databaseService.db
       .delete(studentsTable)
       .where(eq(studentsTable.id, id))
@@ -169,5 +202,16 @@ export class StudentService {
     }
 
     return conditions.length ? and(...conditions) : undefined;
+  }
+
+  /** Narrows an already-built WHERE clause to the caller's own portal, if their role has one. */
+  private applyPortalFilter(where: SQL | undefined, role?: string): SQL | undefined {
+    const portal = callerPortal(role);
+    if (!portal) return where;
+    const portalCondition =
+      portal === "Daycare"
+        ? inArray(studentsTable.className, [...DAYCARE_CLASS_NAMES])
+        : notInArray(studentsTable.className, [...DAYCARE_CLASS_NAMES]);
+    return where ? and(where, portalCondition) : portalCondition;
   }
 }

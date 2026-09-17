@@ -1,6 +1,7 @@
 import { staffAttendanceTable } from "models/school";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
+import { assertExactPortalAccess, assertPortalAccess, callerPortal, classNameToPortal } from "common/portal-scope";
 import { ParamDto } from "common/common.dto";
 import { createId } from "@paralleldrive/cuid2";
 import { type Response } from "express";
@@ -107,7 +108,8 @@ export class SchoolService {
     return this.databaseService.db.select().from(studentsTable);
   }
 
-  createFee(dto: CreateFeeDto) {
+  async createFee(dto: CreateFeeDto, requestingUser?: { userId: string; role: string }) {
+    await this.assertStudentPortalAccess(requestingUser, dto.studentId, "Student not found");
     return this.insert(feesTable, { ...dto, amount: dto.amount.toString() }, "fee");
   }
 
@@ -125,11 +127,13 @@ export class SchoolService {
     return scoped;
   }
 
-  updateFee(id: string, dto: UpdateFeeDto) {
+  async updateFee(id: string, dto: UpdateFeeDto, requestingUser?: { userId: string; role: string }) {
+    await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
     return this.update(feesTable, id, { ...dto, amount: dto.amount?.toString() }, "Fee");
   }
 
-  deleteFee(id: string) {
+  async deleteFee(id: string, requestingUser?: { userId: string; role: string }) {
+    await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
     return this.delete(feesTable, id, "Fee");
   }
 
@@ -357,7 +361,7 @@ export class SchoolService {
     return leave;
   }
 
-  getLeaveRequests(filter?: { userId?: string; role?: string }) {
+  async getLeaveRequests(filter?: { userId?: string; role?: string }) {
     const role = filter?.role?.toUpperCase();
     const query = this.databaseService.db
       .select({
@@ -378,32 +382,46 @@ export class SchoolService {
         applicant: usersTable.name,
         applicantEmail: usersTable.email,
         studentName: studentsTable.name,
-        className: studentsTable.className
+        className: studentsTable.className,
+        applicantClassName: teachersTable.className
       })
       .from(leaveRequestsTable)
       .leftJoin(usersTable, eq(leaveRequestsTable.userId, usersTable.id))
       .leftJoin(studentsTable, eq(leaveRequestsTable.studentId, studentsTable.id))
+      .leftJoin(teachersTable, eq(leaveRequestsTable.userId, teachersTable.userId))
       .$dynamic();
 
     // Teachers and parents only ever see the requests they filed themselves; admins and the
-    // principal see the whole queue.
+    // principal see the whole queue -- but an Admin/Daycare Admin's queue is further confined
+    // to their own portal below (the UI already filtered this; the API never did, so a Daycare
+    // Admin's own token could read, and reviewLeaveRequest below shows it could also approve or
+    // reject, a Kindervale staff member's leave request).
     if ((role === "TEACHER" || role === "PARENT") && filter?.userId) {
       return query.where(eq(leaveRequestsTable.userId, filter.userId));
     }
 
-    return query;
+    const required = callerPortal(filter?.role);
+    const rows = await query;
+    if (!required) return rows;
+    return rows.filter((row) => classNameToPortal(row.applicantClassName) === required);
   }
 
-  getLeaveRequest(id: string) {
-    return this.findOne(leaveRequestsTable, id, "Leave request");
+  getLeaveRequest(id: string, requestingUser?: { userId: string; role: string }) {
+    return this.findLeaveRequestWithPortalCheck(id, requestingUser);
   }
 
-  updateLeaveRequest(id: string, dto: UpdateLeaveRequestDto) {
+  async updateLeaveRequest(id: string, dto: UpdateLeaveRequestDto, requestingUser?: { userId: string; role: string }) {
+    await this.findLeaveRequestWithPortalCheck(id, requestingUser);
     return this.update(leaveRequestsTable, id, dto, "Leave request");
   }
 
-  async reviewLeaveRequest(id: string, dto: ReviewLeaveRequestDto, reviewedBy?: string) {
-    const current = await this.getLeaveRequest(id);
+  async reviewLeaveRequest(
+    id: string,
+    dto: ReviewLeaveRequestDto,
+    reviewedBy?: string,
+    requestingUser?: { userId: string; role: string }
+  ) {
+    const current = await this.findLeaveRequestWithPortalCheck(id, requestingUser);
     const leave = await this.update(leaveRequestsTable, id, { ...dto, reviewedBy, reviewedAt: new Date() }, "Leave request");
     if (dto.status === "APPROVED" && current.status !== "APPROVED") {
       await this.applyApprovedStudentLeaveSideEffects(leave, reviewedBy);
@@ -413,47 +431,95 @@ export class SchoolService {
     return leave;
   }
 
-  deleteLeaveRequest(id: string) {
+  /** Fetches a leave request and, for a portal-confined caller, confirms the staff member who
+   * filed it is on their own side -- resolved via the teacher profile linked to the same userId,
+   * since leave_requests itself carries no className. */
+  private async findLeaveRequestWithPortalCheck(id: string, requestingUser?: { userId: string; role: string }) {
+    const leave = await this.findOne(leaveRequestsTable, id, "Leave request");
+    if (callerPortal(requestingUser?.role)) {
+      const [teacher] = await this.databaseService.db
+        .select({ className: teachersTable.className })
+        .from(teachersTable)
+        .where(eq(teachersTable.userId, leave.userId))
+        .limit(1);
+      assertPortalAccess(requestingUser?.role, teacher?.className, "Leave request not found");
+    }
+    return leave;
+  }
+
+  async deleteLeaveRequest(id: string, requestingUser?: { userId: string; role: string }) {
+    await this.findLeaveRequestWithPortalCheck(id, requestingUser);
+    return this.deleteLeaveRequestRow(id);
+  }
+
+  private deleteLeaveRequestRow(id: string) {
     return this.delete(leaveRequestsTable, id, "Leave request");
   }
 
-  createExpense(dto: CreateExpenseDto, createdBy?: string) {
-    return this.insert(expensesTable, { ...dto, amount: dto.amount.toString(), createdBy }, "expense");
+  createExpense(dto: CreateExpenseDto, createdBy?: string, requestingUser?: { userId: string; role: string }) {
+    // The DTO's portal field was trusting whatever the client sent, which is exactly the kind
+    // of thing this whole pass is closing elsewhere -- an Admin or Daycare Admin's own role
+    // determines their portal; it isn't a free-text field they get to fill in themselves.
+    // PRINCIPAL (no fixed portal) falls back to whatever was sent, same as before.
+    const portal = callerPortal(requestingUser?.role) ?? dto.portal;
+    return this.insert(expensesTable, { ...dto, portal, amount: dto.amount.toString(), createdBy }, "expense");
   }
 
-  getExpenses() {
-    return this.databaseService.db.select().from(expensesTable);
+  async getExpenses(requestingUser?: { userId: string; role: string }) {
+    const rows = await this.databaseService.db.select().from(expensesTable);
+    const required = callerPortal(requestingUser?.role);
+    return required ? rows.filter((row) => (row.portal ?? "Kindervale") === required) : rows;
   }
 
-  getExpense(id: string) {
-    return this.findOne(expensesTable, id, "Expense");
+  async getExpense(id: string, requestingUser?: { userId: string; role: string }) {
+    const expense = await this.findOne(expensesTable, id, "Expense");
+    assertExactPortalAccess(requestingUser?.role, expense.portal, "Expense not found");
+    return expense;
   }
 
-  updateExpense(id: string, dto: UpdateExpenseDto) {
-    return this.update(expensesTable, id, { ...dto, amount: dto.amount?.toString() }, "Expense");
+  async updateExpense(id: string, dto: UpdateExpenseDto, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(expensesTable, id, "Expense");
+    assertExactPortalAccess(requestingUser?.role, existing.portal, "Expense not found");
+    // Same as create: portal is derived from who's asking, never taken from the request body.
+    const portal = callerPortal(requestingUser?.role) ?? dto.portal;
+    return this.update(expensesTable, id, { ...dto, portal, amount: dto.amount?.toString() }, "Expense");
   }
 
-  deleteExpense(id: string) {
+  async deleteExpense(id: string, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(expensesTable, id, "Expense");
+    assertExactPortalAccess(requestingUser?.role, existing.portal, "Expense not found");
     return this.delete(expensesTable, id, "Expense");
   }
 
-  createIncome(dto: CreateIncomeDto, createdBy?: string) {
-    return this.insert(incomeTable, { ...dto, amount: dto.amount.toString(), createdBy }, "income");
+  createIncome(dto: CreateIncomeDto, createdBy?: string, requestingUser?: { userId: string; role: string }) {
+    // Same fix as expenses: portal is derived from the caller's role, never trusted from the
+    // request body.
+    const portal = callerPortal(requestingUser?.role) ?? dto.portal;
+    return this.insert(incomeTable, { ...dto, portal, amount: dto.amount.toString(), createdBy }, "income");
   }
 
-  getIncome() {
-    return this.databaseService.db.select().from(incomeTable);
+  async getIncome(requestingUser?: { userId: string; role: string }) {
+    const rows = await this.databaseService.db.select().from(incomeTable);
+    const required = callerPortal(requestingUser?.role);
+    return required ? rows.filter((row) => (row.portal ?? "Daycare") === required) : rows;
   }
 
-  getIncomeEntry(id: string) {
-    return this.findOne(incomeTable, id, "Income entry");
+  async getIncomeEntry(id: string, requestingUser?: { userId: string; role: string }) {
+    const entry = await this.findOne(incomeTable, id, "Income entry");
+    assertExactPortalAccess(requestingUser?.role, entry.portal, "Income entry not found");
+    return entry;
   }
 
-  updateIncome(id: string, dto: UpdateIncomeDto) {
-    return this.update(incomeTable, id, { ...dto, amount: dto.amount?.toString() }, "Income entry");
+  async updateIncome(id: string, dto: UpdateIncomeDto, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(incomeTable, id, "Income entry");
+    assertExactPortalAccess(requestingUser?.role, existing.portal, "Income entry not found");
+    const portal = callerPortal(requestingUser?.role) ?? dto.portal;
+    return this.update(incomeTable, id, { ...dto, portal, amount: dto.amount?.toString() }, "Income entry");
   }
 
-  deleteIncome(id: string) {
+  async deleteIncome(id: string, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(incomeTable, id, "Income entry");
+    assertExactPortalAccess(requestingUser?.role, existing.portal, "Income entry not found");
     return this.delete(incomeTable, id, "Income entry");
   }
 
@@ -497,7 +563,12 @@ export class SchoolService {
     return this.delete(schoolPoliciesTable, id, "School policy");
   }
 
-  createDaycareReport(dto: CreateDaycareReportDto, createdBy?: string) {
+  async createDaycareReport(
+    dto: CreateDaycareReportDto,
+    createdBy?: string,
+    requestingUser?: { userId: string; role: string }
+  ) {
+    await this.assertStudentPortalAccess(requestingUser, dto.studentId, "Student not found");
     return this.insert(daycareReportsTable, { ...dto, createdBy }, "daycare report");
   }
 
@@ -513,11 +584,17 @@ export class SchoolService {
     return scoped;
   }
 
-  updateDaycareReport(id: string, dto: UpdateDaycareReportDto) {
+  async updateDaycareReport(
+    id: string,
+    dto: UpdateDaycareReportDto,
+    requestingUser?: { userId: string; role: string }
+  ) {
+    await this.assertExistingRowPortalAccess(daycareReportsTable, id, requestingUser, "Daycare report not found");
     return this.update(daycareReportsTable, id, dto, "Daycare report");
   }
 
-  deleteDaycareReport(id: string) {
+  async deleteDaycareReport(id: string, requestingUser?: { userId: string; role: string }) {
+    await this.assertExistingRowPortalAccess(daycareReportsTable, id, requestingUser, "Daycare report not found");
     return this.delete(daycareReportsTable, id, "Daycare report");
   }
 
@@ -783,6 +860,43 @@ export class SchoolService {
     return rows.filter((row) => studentIds.has(row[studentIdField] as string));
   }
 
+  /**
+   * For write paths keyed by studentId (fees, daycare reports): confirms the referenced student
+   * belongs to the caller's own portal before the write happens. Same gap as students/teachers
+   * themselves -- a Daycare Admin's token had no server-side reason it couldn't create or edit a
+   * fee or daycare report against a Kindervale child, only ever the frontend choosing not to
+   * offer one. No-ops for roles with no portal (PRINCIPAL, PARENT -- the latter never reaches
+   * these write endpoints at all, gated by permission).
+   */
+  private async assertStudentPortalAccess(
+    requestingUser: { userId: string; role: string } | undefined,
+    studentId: string | undefined,
+    notFoundMessage: string
+  ): Promise<void> {
+    if (!callerPortal(requestingUser?.role) || !studentId) return;
+    const [student] = await this.databaseService.db
+      .select({ className: studentsTable.className })
+      .from(studentsTable)
+      .where(eq(studentsTable.id, studentId))
+      .limit(1);
+    assertPortalAccess(requestingUser?.role, student?.className, notFoundMessage);
+  }
+
+  /** Same check as assertStudentPortalAccess, but for update/delete where only the row's own
+   * id is known -- looks up its studentId first. Works for any table with a studentId column
+   * (fees, daycare reports). */
+  private async assertExistingRowPortalAccess(
+    table: any,
+    id: string,
+    requestingUser: { userId: string; role: string } | undefined,
+    notFoundMessage: string
+  ): Promise<void> {
+    if (!callerPortal(requestingUser?.role)) return;
+    const [row] = await this.databaseService.db.select({ studentId: table.studentId }).from(table).where(eq(table.id, id)).limit(1);
+    if (!row) throw new NotFoundException(notFoundMessage);
+    await this.assertStudentPortalAccess(requestingUser, row.studentId as string, notFoundMessage);
+  }
+
   private async applyApprovedStudentLeaveSideEffects(leave: any, actorUserId?: string) {
     if (!leave?.studentId) return;
 
@@ -880,7 +994,10 @@ export class SchoolService {
   }
 
   // ── Staff Attendance ─────────────────────────────────────────
-  async getStaffAttendance(query: { date?: string; teacherId?: string; fromDate?: string; toDate?: string }) {
+  async getStaffAttendance(
+    query: { date?: string; teacherId?: string; fromDate?: string; toDate?: string },
+    requestingUser?: { userId: string; role: string }
+  ) {
     const conditions: SQL[] = [];
     if (query.teacherId) conditions.push(eq(staffAttendanceTable.teacherId, query.teacherId));
     if (query.date) conditions.push(eq(staffAttendanceTable.date, query.date));
@@ -889,16 +1006,52 @@ export class SchoolService {
     const where = conditions.length ? and(...conditions) : undefined;
 
     const items = await this.databaseService.db
-      .select()
+      .select({
+        id: staffAttendanceTable.id,
+        teacherId: staffAttendanceTable.teacherId,
+        date: staffAttendanceTable.date,
+        status: staffAttendanceTable.status,
+        remarks: staffAttendanceTable.remarks,
+        markedBy: staffAttendanceTable.markedBy,
+        createdAt: staffAttendanceTable.createdAt,
+        updatedAt: staffAttendanceTable.updatedAt,
+        teacherClassName: teachersTable.className
+      })
       .from(staffAttendanceTable)
+      .leftJoin(teachersTable, eq(staffAttendanceTable.teacherId, teachersTable.id))
       .where(where)
       .orderBy(desc(staffAttendanceTable.date));
 
-    return { items };
+    const required = callerPortal(requestingUser?.role);
+    const scoped = required ? items.filter((row) => classNameToPortal(row.teacherClassName) === required) : items;
+    return { items: scoped.map(({ teacherClassName, ...row }) => row) };
   }
 
-  async bulkMarkStaffAttendance(dto: { date: string; records: { teacherId: string; status: string; remarks?: string }[] }, markedBy?: string) {
+  async bulkMarkStaffAttendance(
+    dto: { date: string; records: { teacherId: string; status: string; remarks?: string }[] },
+    markedBy?: string,
+    requestingUser?: { userId: string; role: string }
+  ) {
     const date = dto.date.slice(0, 10);
+    const required = callerPortal(requestingUser?.role);
+
+    // Confirm every teacherId in the batch belongs to the caller's own portal before writing
+    // any of it -- a Daycare Admin's token had nothing stopping it marking a Kindervale
+    // teacher's attendance (or vice versa), same gap as everywhere else in this pass.
+    if (required) {
+      const teacherIds = [...new Set(dto.records.map((rec) => rec.teacherId))];
+      const rows = teacherIds.length
+        ? await this.databaseService.db
+            .select({ id: teachersTable.id, className: teachersTable.className })
+            .from(teachersTable)
+            .where(inArray(teachersTable.id, teacherIds))
+        : [];
+      const classNameById = new Map(rows.map((row) => [row.id, row.className]));
+      for (const teacherId of teacherIds) {
+        assertPortalAccess(requestingUser?.role, classNameById.get(teacherId), "Teacher not found");
+      }
+    }
+
     const results: any[] = [];
 
     for (const rec of dto.records) {

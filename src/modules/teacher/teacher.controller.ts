@@ -14,15 +14,15 @@ export class TeacherController {
 
   @RequirePermission("teachers", "CREATE")
   @Post()
-  async createTeacher(@Body() dto: CreateTeacherDto) {
-    const teacher = await this.teacherService.createTeacher(dto);
+  async createTeacher(@Body() dto: CreateTeacherDto, @User("userId") userId: string, @User("role") role: string) {
+    const teacher = await this.teacherService.createTeacher(dto, { userId, role });
     return { data: teacher };
   }
 
   @RequirePermission("teachers", "READ")
   @Get()
-  async getTeachers(@Query() query: TeacherListQueryDto) {
-    const teachers = await this.teacherService.getTeachers(query);
+  async getTeachers(@Query() query: TeacherListQueryDto, @User("userId") userId: string, @User("role") role: string) {
+    const teachers = await this.teacherService.getTeachers(query, { userId, role });
     return { data: teachers };
   }
 
@@ -42,22 +42,27 @@ export class TeacherController {
 
   @RequirePermission("teachers", "READ")
   @Get(":id")
-  async getTeacher(@Param() { id }: ParamDto) {
-    const teacher = await this.teacherService.getTeacher(id);
+  async getTeacher(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    const teacher = await this.teacherService.getTeacher(id, { userId, role });
     return { data: teacher };
   }
 
   @RequirePermission("teachers", "UPDATE")
   @Patch(":id")
-  async updateTeacher(@Param() { id }: ParamDto, @Body() dto: UpdateTeacherDto) {
-    const teacher = await this.teacherService.updateTeacher(id, dto);
+  async updateTeacher(
+    @Param() { id }: ParamDto,
+    @Body() dto: UpdateTeacherDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    const teacher = await this.teacherService.updateTeacher(id, dto, { userId, role });
     return { data: teacher };
   }
 
   @RequirePermission("teachers", "DELETE")
   @Delete(":id")
-  async deleteTeacher(@Param() { id }: ParamDto) {
-    await this.teacherService.deleteTeacher(id);
+  async deleteTeacher(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    await this.teacherService.deleteTeacher(id, { userId, role });
     return { message: "Teacher deleted successfully" };
   }
 }
