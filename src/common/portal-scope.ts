@@ -14,8 +14,17 @@ export type SchoolPortal = "Kindervale" | "Daycare";
 export const classNameToPortal = (className?: string | null): SchoolPortal =>
   DAYCARE_CLASS_NAMES.includes((className ?? "") as (typeof DAYCARE_CLASS_NAMES)[number]) ? "Daycare" : "Kindervale";
 
-/** Tokens carry the lowercase portal role ("admin", "daycare_admin", "parent", ...). */
-const normalizeRole = (role?: string): string => (role ?? "").trim().toUpperCase().replace(/[\s-]+/g, "");
+/**
+ * Tokens carry the lowercase portal role ("admin", "daycare_admin", "parent", ...) -- note the
+ * underscore. Stripping only whitespace/hyphen (the pattern used elsewhere in this codebase,
+ * e.g. permission.guard.ts's normalizeTokenRole) leaves "DAYCARE_ADMIN", which then fails an
+ * exact match against "DAYCAREADMIN" and silently disables this entire module for that one
+ * role -- confirmed live: the fix compiled and deployed clean, but a Daycare Admin's PATCH on a
+ * Kindervale student still returned 200, because callerPortal() was returning null for them
+ * unconditionally. Stripping underscores too (matching common/role-normalizer.ts) fixes it with
+ * a single comparison instead of checking both spellings at every call site.
+ */
+const normalizeRole = (role?: string): string => (role ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "");
 
 /**
  * The portal an ADMIN or DAYCAREADMIN token is confined to, or null for every other role
