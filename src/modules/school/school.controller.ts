@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ParamDto } from "common/common.dto";
+import type { SchoolPortal } from "common/portal-scope";
 import { type Response } from "express";
 import { AuthGuard } from "middleware/auth.guard";
 import { RequirePermission } from "middleware/permission.decorator";
@@ -499,21 +500,31 @@ export class SchoolController {
   async createDaycareReport(
     @Body() dto: CreateDaycareReportDto,
     @User("userId") userId: string,
-    @User("role") role: string
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
   ) {
-    return { data: await this.schoolService.createDaycareReport(dto, userId, { userId, role }) };
+    return { data: await this.schoolService.createDaycareReport(dto, userId, { userId, role, portal }) };
   }
 
   @RequirePermission("daycare-reports", "READ")
   @Get("daycare-reports")
-  async getDaycareReports(@User("userId") userId: string, @User("role") role: string) {
-    return { data: await this.schoolService.getDaycareReports({ userId, role }) };
+  async getDaycareReports(
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
+  ) {
+    return { data: await this.schoolService.getDaycareReports({ userId, role, portal }) };
   }
 
   @RequirePermission("daycare-reports", "READ")
   @Get("daycare-reports/:id")
-  async getDaycareReport(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
-    return { data: await this.schoolService.getDaycareReport(id, { userId, role }) };
+  async getDaycareReport(
+    @Param() { id }: ParamDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
+  ) {
+    return { data: await this.schoolService.getDaycareReport(id, { userId, role, portal }) };
   }
 
   @RequirePermission("daycare-reports", "UPDATE")
@@ -522,9 +533,10 @@ export class SchoolController {
     @Param() { id }: ParamDto,
     @Body() dto: UpdateDaycareReportDto,
     @User("userId") userId: string,
-    @User("role") role: string
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
   ) {
-    return { data: await this.schoolService.updateDaycareReport(id, dto, { userId, role }) };
+    return { data: await this.schoolService.updateDaycareReport(id, dto, { userId, role, portal }) };
   }
 
   @RequirePermission("daycare-reports", "DELETE")

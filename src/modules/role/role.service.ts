@@ -1,5 +1,7 @@
 import { ConflictException, Injectable, Logger, NotFoundException, type OnApplicationBootstrap } from "@nestjs/common";
 import { and, eq, inArray } from "drizzle-orm";
+import { classNameToPortal, type SchoolPortal } from "common/portal-scope";
+import teachersTable from "models/teachers";
 import { permissionsTable, rolePermissionsTable, rolesTable, type PermissionAction } from "models/roles";
 import { type UserRole, userRoleEnum } from "models/users";
 import { DatabaseService } from "modules/database/database.service";
@@ -244,6 +246,20 @@ export class RoleService implements OnApplicationBootstrap {
       .from(rolePermissionsTable)
       .innerJoin(permissionsTable, eq(rolePermissionsTable.permissionId, permissionsTable.id))
       .where(eq(rolePermissionsTable.roleId, roleId));
+  }
+
+  /**
+   * A teacher's portal, taken from the class on their own profile. A teacher with no profile
+   * row yet (or an unassigned class) resolves to Kindervale, the same default classNameToPortal
+   * gives every unrecognised class name.
+   */
+  async teacherPortal(userId: string): Promise<SchoolPortal> {
+    const [teacher] = await this.databaseService.db
+      .select({ className: teachersTable.className })
+      .from(teachersTable)
+      .where(eq(teachersTable.userId, userId))
+      .limit(1);
+    return classNameToPortal(teacher?.className);
   }
 
   async userRoleCan(roleName: UserRole, requirement: PermissionCheckDto): Promise<boolean> {

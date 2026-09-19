@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, gte, lte, ne, sql, type SQL } from "drizzle-orm";
-import { attendanceTable, classesTable, studentsTable, type Attendance } from "models/school";
+import { and, asc, count, desc, eq, gte, inArray, lte, ne, notInArray, sql, type SQL } from "drizzle-orm";
+import { callerPortal, DAYCARE_CLASS_NAMES, type SchoolPortal } from "common/portal-scope";
+import { attendanceTable, classesTable, parentsTable, studentsTable, type Attendance } from "models/school";
 import { DatabaseService } from "modules/database/database.service";
 import type {
   AttendanceListQueryDto,
@@ -8,6 +9,8 @@ import type {
   CreateAttendanceDto,
   UpdateAttendanceDto
 } from "modules/attendance/attendance.dto";
+
+type RequestingUser = { userId: string; role: string; portal?: SchoolPortal | null };
 
 @Injectable()
 export class AttendanceService {
@@ -65,11 +68,13 @@ export class AttendanceService {
     return records;
   }
 
-  async getAttendance(query: AttendanceListQueryDto) {
+  async getAttendance(query: AttendanceListQueryDto, requestingUser?: RequestingUser) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const offset = (page - 1) * limit;
-    const where = this.buildAttendanceWhere(query);
+    const scope = this.buildScopeCondition(requestingUser);
+    const base = this.buildAttendanceWhere(query);
+    const where = scope ? (base ? and(base, scope) : scope) : base;
     const sortColumn = attendanceTable[query.sortBy ?? "date"];
     const orderBy = query.sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn);
 
@@ -84,8 +89,10 @@ export class AttendanceService {
     };
   }
 
-  async getAttendanceRecord(id: string): Promise<Attendance> {
-    const [attendance] = await this.databaseService.db.select().from(attendanceTable).where(eq(attendanceTable.id, id)).limit(1);
+  async getAttendanceRecord(id: string, requestingUser?: RequestingUser): Promise<Attendance> {
+    const scope = this.buildScopeCondition(requestingUser);
+    const where = scope ? and(eq(attendanceTable.id, id), scope) : eq(attendanceTable.id, id);
+    const [attendance] = await this.databaseService.db.select().from(attendanceTable).where(where).limit(1);
     if (!attendance) throw new NotFoundException("Attendance record not found");
     return attendance;
   }
@@ -161,6 +168,36 @@ export class AttendanceService {
       .update(studentsTable)
       .set({ attendance: Math.round((present / total) * 100), updatedAt: new Date() })
       .where(eq(studentsTable.id, studentId));
+  }
+
+  /**
+   * Restricts attendance rows to what the caller is entitled to see. A PARENT only ever sees their
+   * own children -- before this, any parent could list every child's attendance. ADMIN, DAYCAREADMIN
+   * and TEACHER are confined to their own portal. PRINCIPAL is unrestricted. Reports "not found"
+   * rather than "forbidden" for single records so it can't be used to probe which ids exist.
+   */
+  private buildScopeCondition(requestingUser?: RequestingUser): SQL | undefined {
+    if (!requestingUser) return undefined;
+    const db = this.databaseService.db;
+
+    if (requestingUser.role.trim().toUpperCase() === "PARENT") {
+      return inArray(
+        attendanceTable.studentId,
+        db
+          .select({ id: studentsTable.id })
+          .from(studentsTable)
+          .innerJoin(parentsTable, eq(studentsTable.parentId, parentsTable.id))
+          .where(eq(parentsTable.userId, requestingUser.userId))
+      );
+    }
+
+    const portal = callerPortal(requestingUser);
+    if (!portal) return undefined;
+    const inPortal =
+      portal === "Daycare"
+        ? inArray(studentsTable.className, [...DAYCARE_CLASS_NAMES])
+        : notInArray(studentsTable.className, [...DAYCARE_CLASS_NAMES]);
+    return inArray(attendanceTable.studentId, db.select({ id: studentsTable.id }).from(studentsTable).where(inPortal));
   }
 
   private buildAttendanceWhere(query: AttendanceListQueryDto): SQL | undefined {
