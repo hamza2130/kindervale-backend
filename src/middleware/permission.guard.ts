@@ -37,6 +37,12 @@ export class PermissionGuard implements CanActivate {
     const allowed = await this.roleService.userRoleCan(role, requirement);
     if (!allowed) throw new ForbiddenException("You do not have permission to perform this action");
 
+    // A teacher's portal comes from their profile, not the token, so a class change takes effect
+    // immediately instead of waiting for the token to expire.
+    if (role === "TEACHER" && request.user?.userId) {
+      request.user.portal = await this.roleService.teacherPortal(request.user.userId);
+    }
+
     return true;
   }
 }

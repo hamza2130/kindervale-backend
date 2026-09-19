@@ -27,14 +27,25 @@ export const classNameToPortal = (className?: string | null): SchoolPortal =>
 const normalizeRole = (role?: string): string => (role ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "");
 
 /**
- * The portal an ADMIN or DAYCAREADMIN token is confined to, or null for every other role
- * (PRINCIPAL sees both; PARENT/TEACHER are scoped by their own linked records instead, not by
- * portal). Nothing outside these two roles should ever be restricted by this check.
+ * A role string, or the request user. Teachers are the one role whose portal is not implied by
+ * the role alone: it comes from the class on their own teacher profile, which PermissionGuard
+ * resolves once per request and attaches as `portal`.
  */
-export const callerPortal = (role?: string): SchoolPortal | null => {
+export type PortalCaller = string | { role?: string; portal?: SchoolPortal | null } | undefined;
+
+/**
+ * The portal a caller is confined to, or null when they are not confined by portal: PRINCIPAL
+ * sees both, and PARENT is scoped by their own linked children instead. ADMIN and DAYCAREADMIN
+ * are fixed by role. A TEACHER is only confined when handed the user object carrying the portal
+ * resolved from their profile -- passing the bare role string cannot know it and returns null,
+ * so call sites that must restrict teachers have to pass the user, not `user.role`.
+ */
+export const callerPortal = (caller?: PortalCaller): SchoolPortal | null => {
+  const role = typeof caller === "string" || caller === undefined ? caller : caller.role;
   const normalized = normalizeRole(role);
   if (normalized === "ADMIN") return "Kindervale";
   if (normalized === "DAYCAREADMIN") return "Daycare";
+  if (normalized === "TEACHER" && typeof caller === "object") return caller.portal ?? null;
   return null;
 };
 
@@ -47,7 +58,7 @@ export const callerPortal = (role?: string): SchoolPortal | null => {
  * to use to confirm which students exist on the other side.
  */
 export const assertPortalAccess = (
-  role: string | undefined,
+  role: PortalCaller,
   recordClassName: string | null | undefined,
   notFoundMessage: string
 ): void => {
@@ -63,7 +74,7 @@ export const assertPortalAccess = (
  * record is written. Reported as a plain permission error (not "not found" -- there is nothing
  * to hide the existence of when nothing exists yet).
  */
-export const assertPortalForCreate = (role: string | undefined, className: string | null | undefined): void => {
+export const assertPortalForCreate = (role: PortalCaller, className: string | null | undefined): void => {
   const required = callerPortal(role);
   if (!required) return;
   if (classNameToPortal(className) !== required) {
@@ -77,7 +88,7 @@ export const assertPortalForCreate = (role: string | undefined, className: strin
  * directly rather than routing it back through classNameToPortal.
  */
 export const assertExactPortalAccess = (
-  role: string | undefined,
+  role: PortalCaller,
   recordPortal: string | null | undefined,
   notFoundMessage: string
 ): void => {

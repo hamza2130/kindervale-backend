@@ -4,6 +4,7 @@ import { AuthGuard } from "middleware/auth.guard";
 import { RequirePermission } from "middleware/permission.decorator";
 import { PermissionGuard } from "middleware/permission.guard";
 import { User } from "middleware/user.decorator";
+import type { SchoolPortal } from "common/portal-scope";
 import { CreateStudentDto, StudentListQueryDto, UpdateStudentDto } from "modules/student/student.dto";
 import { StudentService } from "modules/student/student.service";
 
@@ -23,15 +24,21 @@ export class StudentController {
   async getStudents(
     @Query() query: StudentListQueryDto,
     @User("userId") userId: string,
-    @User("role") role: string
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
   ) {
-    return { data: await this.studentService.getStudents(query, { userId, role }) };
+    return { data: await this.studentService.getStudents(query, { userId, role, portal }) };
   }
 
   @RequirePermission("students", "READ")
   @Get(":id")
-  async getStudent(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
-    return { data: await this.studentService.getStudent(id, { userId, role }) };
+  async getStudent(
+    @Param() { id }: ParamDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
+  ) {
+    return { data: await this.studentService.getStudent(id, { userId, role, portal }) };
   }
 
   @RequirePermission("students", "UPDATE")

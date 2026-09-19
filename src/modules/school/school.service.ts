@@ -1,7 +1,13 @@
 import { staffAttendanceTable } from "models/school";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
-import { assertExactPortalAccess, assertPortalAccess, callerPortal, classNameToPortal } from "common/portal-scope";
+import {
+  assertExactPortalAccess,
+  assertPortalAccess,
+  callerPortal,
+  classNameToPortal,
+  type SchoolPortal
+} from "common/portal-scope";
 import { ParamDto } from "common/common.dto";
 import { createId } from "@paralleldrive/cuid2";
 import { type Response } from "express";
@@ -566,20 +572,20 @@ export class SchoolService {
   async createDaycareReport(
     dto: CreateDaycareReportDto,
     createdBy?: string,
-    requestingUser?: { userId: string; role: string }
+    requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }
   ) {
     await this.assertStudentPortalAccess(requestingUser, dto.studentId, "Student not found");
     return this.insert(daycareReportsTable, { ...dto, createdBy }, "daycare report");
   }
 
-  async getDaycareReports(requestingUser?: { userId: string; role: string }) {
+  async getDaycareReports(requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }) {
     const rows = await this.databaseService.db.select().from(daycareReportsTable);
-    return this.scopeRowsToParent(rows, requestingUser);
+    return this.scopeRowsToPortal(await this.scopeRowsToParent(rows, requestingUser), requestingUser);
   }
 
-  async getDaycareReport(id: string, requestingUser?: { userId: string; role: string }) {
+  async getDaycareReport(id: string, requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }) {
     const report = await this.findOne(daycareReportsTable, id, "Daycare report");
-    const [scoped] = await this.scopeRowsToParent([report], requestingUser);
+    const [scoped] = await this.scopeRowsToPortal(await this.scopeRowsToParent([report], requestingUser), requestingUser);
     if (!scoped) throw new NotFoundException("Daycare report not found");
     return scoped;
   }
@@ -587,13 +593,13 @@ export class SchoolService {
   async updateDaycareReport(
     id: string,
     dto: UpdateDaycareReportDto,
-    requestingUser?: { userId: string; role: string }
+    requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }
   ) {
     await this.assertExistingRowPortalAccess(daycareReportsTable, id, requestingUser, "Daycare report not found");
     return this.update(daycareReportsTable, id, dto, "Daycare report");
   }
 
-  async deleteDaycareReport(id: string, requestingUser?: { userId: string; role: string }) {
+  async deleteDaycareReport(id: string, requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }) {
     await this.assertExistingRowPortalAccess(daycareReportsTable, id, requestingUser, "Daycare report not found");
     return this.delete(daycareReportsTable, id, "Daycare report");
   }
@@ -861,6 +867,36 @@ export class SchoolService {
   }
 
   /**
+   * Read-side counterpart of assertStudentPortalAccess: drops rows whose student belongs to the
+   * other portal. Rows with no resolvable student are dropped too -- for a confined caller,
+   * "can't prove it's mine" has to mean "not shown". No-op for callers with no portal.
+   */
+  private async scopeRowsToPortal<T extends Record<string, unknown>>(
+    rows: T[],
+    requestingUser: { userId: string; role: string; portal?: SchoolPortal | null } | undefined,
+    studentIdField: keyof T = "studentId" as keyof T
+  ): Promise<T[]> {
+    const required = callerPortal(requestingUser);
+    if (!required || !rows.length) return rows;
+    const studentIds: string[] = [
+      ...new Set(
+        rows.flatMap((row) => {
+          const id = row[studentIdField];
+          return typeof id === "string" ? [id as string] : [];
+        })
+      )
+    ];
+    const students = studentIds.length
+      ? await this.databaseService.db
+          .select({ id: studentsTable.id, className: studentsTable.className })
+          .from(studentsTable)
+          .where(inArray(studentsTable.id, studentIds))
+      : [];
+    const portalByStudent = new Map(students.map((student) => [student.id, classNameToPortal(student.className)]));
+    return rows.filter((row) => portalByStudent.get(row[studentIdField] as string) === required);
+  }
+
+  /**
    * For write paths keyed by studentId (fees, daycare reports): confirms the referenced student
    * belongs to the caller's own portal before the write happens. Same gap as students/teachers
    * themselves -- a Daycare Admin's token had no server-side reason it couldn't create or edit a
@@ -869,17 +905,17 @@ export class SchoolService {
    * these write endpoints at all, gated by permission).
    */
   private async assertStudentPortalAccess(
-    requestingUser: { userId: string; role: string } | undefined,
+    requestingUser: { userId: string; role: string; portal?: SchoolPortal | null } | undefined,
     studentId: string | undefined,
     notFoundMessage: string
   ): Promise<void> {
-    if (!callerPortal(requestingUser?.role) || !studentId) return;
+    if (!callerPortal(requestingUser) || !studentId) return;
     const [student] = await this.databaseService.db
       .select({ className: studentsTable.className })
       .from(studentsTable)
       .where(eq(studentsTable.id, studentId))
       .limit(1);
-    assertPortalAccess(requestingUser?.role, student?.className, notFoundMessage);
+    assertPortalAccess(requestingUser, student?.className, notFoundMessage);
   }
 
   /** Same check as assertStudentPortalAccess, but for update/delete where only the row's own
@@ -888,10 +924,10 @@ export class SchoolService {
   private async assertExistingRowPortalAccess(
     table: any,
     id: string,
-    requestingUser: { userId: string; role: string } | undefined,
+    requestingUser: { userId: string; role: string; portal?: SchoolPortal | null } | undefined,
     notFoundMessage: string
   ): Promise<void> {
-    if (!callerPortal(requestingUser?.role)) return;
+    if (!callerPortal(requestingUser)) return;
     const [row] = await this.databaseService.db.select({ studentId: table.studentId }).from(table).where(eq(table.id, id)).limit(1);
     if (!row) throw new NotFoundException(notFoundMessage);
     await this.assertStudentPortalAccess(requestingUser, row.studentId as string, notFoundMessage);
