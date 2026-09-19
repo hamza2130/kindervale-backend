@@ -92,31 +92,31 @@ export class SchoolController {
     return { message: "Fee deleted successfully" };
   }
 
-  @RequirePermission("documents", "CREATE")
+  @RequirePermission("exams", "CREATE")
   @Post("exams")
   async createExam(@Body() dto: CreateExamDto) {
     return { data: await this.schoolService.createExam(dto) };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("exams", "READ")
   @Get("exams")
   async getExams() {
     return { data: await this.schoolService.getExams() };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("exams", "READ")
   @Get("exams/:id")
   async getExam(@Param() { id }: ParamDto) {
     return { data: await this.schoolService.getExam(id) };
   }
 
-  @RequirePermission("documents", "UPDATE")
+  @RequirePermission("exams", "UPDATE")
   @Patch("exams/:id")
   async updateExam(@Param() { id }: ParamDto, @Body() dto: UpdateExamDto) {
     return { data: await this.schoolService.updateExam(id, dto) };
   }
 
-  @RequirePermission("documents", "DELETE")
+  @RequirePermission("exams", "DELETE")
   @Delete("exams/:id")
   async deleteExam(@Param() { id }: ParamDto) {
     await this.schoolService.deleteExam(id);
@@ -534,31 +534,31 @@ export class SchoolController {
     return { message: "Daycare report deleted successfully" };
   }
 
-  @RequirePermission("documents", "CREATE")
+  @RequirePermission("daycare-resources", "CREATE")
   @Post("daycare-resources")
   async createDaycareResource(@Body() dto: CreateDaycareResourceDto, @User("userId") userId: string) {
     return { data: await this.schoolService.createDaycareResource(dto, userId) };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("daycare-resources", "READ")
   @Get("daycare-resources")
   async getDaycareResources() {
     return { data: await this.schoolService.getDaycareResources() };
   }
 
-  @RequirePermission("documents", "READ")
+  @RequirePermission("daycare-resources", "READ")
   @Get("daycare-resources/:id")
   async getDaycareResource(@Param() { id }: ParamDto) {
     return { data: await this.schoolService.getDaycareResource(id) };
   }
 
-  @RequirePermission("documents", "UPDATE")
+  @RequirePermission("daycare-resources", "UPDATE")
   @Patch("daycare-resources/:id")
   async updateDaycareResource(@Param() { id }: ParamDto, @Body() dto: UpdateDaycareResourceDto) {
     return { data: await this.schoolService.updateDaycareResource(id, dto) };
   }
 
-  @RequirePermission("documents", "DELETE")
+  @RequirePermission("daycare-resources", "DELETE")
   @Delete("daycare-resources/:id")
   async deleteDaycareResource(@Param() { id }: ParamDto) {
     await this.schoolService.deleteDaycareResource(id);
