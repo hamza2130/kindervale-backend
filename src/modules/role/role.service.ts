@@ -74,6 +74,8 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     notices: ["CREATE", "READ", "UPDATE", "DELETE"],
     calendar: ["READ"],
     documents: ["READ"],
+    exams: ["READ"],
+    "daycare-resources": ["READ"],
     settings: ["READ"]
   },
   TEACHER: {
@@ -93,7 +95,9 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     "daycare-reports": ["CREATE", "READ", "UPDATE"],
     notices: ["READ"],
     calendar: ["READ"],
-    documents: ["CREATE", "READ"]
+    documents: ["CREATE", "READ"],
+    exams: ["READ"],
+    "daycare-resources": ["READ"]
   },
   PARENT: {
     dashboard: ["READ"],
@@ -109,7 +113,9 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     calendar: ["READ"],
     // Leave requests live behind the documents permission, so a parent needs CREATE here to
     // be able to apply for their child's leave at all.
-    documents: ["CREATE", "READ"]
+    documents: ["CREATE", "READ"],
+    exams: ["READ"],
+    "daycare-resources": ["READ"]
   },
 };
 
