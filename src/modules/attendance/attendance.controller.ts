@@ -20,14 +20,24 @@ export class AttendanceController {
 
   @RequirePermission("attendance", "CREATE")
   @Post()
-  async createAttendance(@Body() dto: CreateAttendanceDto, @User("userId") userId: string) {
-    return { data: await this.attendanceService.createAttendance(dto, userId) };
+  async createAttendance(
+    @Body() dto: CreateAttendanceDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
+  ) {
+    return { data: await this.attendanceService.createAttendance(dto, userId, { userId, role, portal }) };
   }
 
   @RequirePermission("attendance", "CREATE")
   @Post("bulk")
-  async bulkMarkAttendance(@Body() dto: BulkMarkAttendanceDto, @User("userId") userId: string) {
-    return { data: await this.attendanceService.bulkMarkAttendance(dto, userId) };
+  async bulkMarkAttendance(
+    @Body() dto: BulkMarkAttendanceDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
+  ) {
+    return { data: await this.attendanceService.bulkMarkAttendance(dto, userId, { userId, role, portal }) };
   }
 
   @RequirePermission("attendance", "READ")
@@ -54,14 +64,25 @@ export class AttendanceController {
 
   @RequirePermission("attendance", "UPDATE")
   @Patch(":id")
-  async updateAttendance(@Param() { id }: ParamDto, @Body() dto: UpdateAttendanceDto, @User("userId") userId: string) {
-    return { data: await this.attendanceService.updateAttendance(id, dto, userId) };
+  async updateAttendance(
+    @Param() { id }: ParamDto,
+    @Body() dto: UpdateAttendanceDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
+  ) {
+    return { data: await this.attendanceService.updateAttendance(id, dto, userId, { userId, role, portal }) };
   }
 
   @RequirePermission("attendance", "DELETE")
   @Delete(":id")
-  async deleteAttendance(@Param() { id }: ParamDto) {
-    await this.attendanceService.deleteAttendance(id);
+  async deleteAttendance(
+    @Param() { id }: ParamDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("portal") portal?: SchoolPortal
+  ) {
+    await this.attendanceService.deleteAttendance(id, { userId, role, portal });
     return { message: "Attendance record deleted successfully" };
   }
 }

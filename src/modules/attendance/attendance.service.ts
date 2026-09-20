@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, inArray, lte, ne, notInArray, sql, type SQL } from "drizzle-orm";
-import { callerPortal, DAYCARE_CLASS_NAMES, type SchoolPortal } from "common/portal-scope";
+import { assertPortalAccess, callerPortal, DAYCARE_CLASS_NAMES, type SchoolPortal } from "common/portal-scope";
 import { attendanceTable, classesTable, parentsTable, studentsTable, type Attendance } from "models/school";
 import { DatabaseService } from "modules/database/database.service";
 import type {
@@ -16,9 +16,9 @@ type RequestingUser = { userId: string; role: string; portal?: SchoolPortal | nu
 export class AttendanceService {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async createAttendance(dto: CreateAttendanceDto, markedBy?: string): Promise<Attendance> {
+  async createAttendance(dto: CreateAttendanceDto, markedBy?: string, requestingUser?: RequestingUser): Promise<Attendance> {
     const date = this.normalizeDate(dto.date);
-    await this.validateRelations(dto.studentId, dto.classId);
+    await this.validateRelations(dto.studentId, dto.classId, requestingUser);
     await this.ensureAttendanceAvailable(dto.studentId, date);
 
     const [attendance] = await this.databaseService.db.insert(attendanceTable).values({ ...dto, date, markedBy }).returning();
@@ -28,14 +28,20 @@ export class AttendanceService {
     return attendance;
   }
 
-  async bulkMarkAttendance(dto: BulkMarkAttendanceDto, markedBy?: string) {
+  async bulkMarkAttendance(dto: BulkMarkAttendanceDto, markedBy?: string, requestingUser?: RequestingUser) {
     if (dto.classId) await this.validateClass(dto.classId);
 
     const records: Attendance[] = [];
     const date = this.normalizeDate(dto.date);
     const uniqueRecords = Array.from(new Map(dto.records.map((record) => [record.studentId, record])).values());
+    // Checked for the whole batch before any row is written, so one cross-portal id can't leave
+    // the earlier students in the list already marked.
+    await this.assertStudentsInPortal(
+      uniqueRecords.map((record) => record.studentId),
+      requestingUser
+    );
     for (const record of uniqueRecords) {
-      await this.validateRelations(record.studentId, dto.classId);
+      await this.validateRelations(record.studentId, dto.classId, requestingUser);
 
       const existingRecords = await this.databaseService.db
         .select({ id: attendanceTable.id })
@@ -97,8 +103,13 @@ export class AttendanceService {
     return attendance;
   }
 
-  async updateAttendance(id: string, dto: UpdateAttendanceDto, markedBy?: string): Promise<Attendance> {
-    const current = await this.getAttendanceRecord(id);
+  async updateAttendance(
+    id: string,
+    dto: UpdateAttendanceDto,
+    markedBy?: string,
+    requestingUser?: RequestingUser
+  ): Promise<Attendance> {
+    const current = await this.getAttendanceRecord(id, requestingUser);
     if (dto.classId) await this.validateClass(dto.classId);
     const normalizedDto = dto.date ? { ...dto, date: this.normalizeDate(dto.date) } : dto;
     if (normalizedDto.date) await this.ensureAttendanceAvailable(current.studentId, normalizedDto.date, id);
@@ -114,7 +125,8 @@ export class AttendanceService {
     return attendance;
   }
 
-  async deleteAttendance(id: string): Promise<void> {
+  async deleteAttendance(id: string, requestingUser?: RequestingUser): Promise<void> {
+    await this.getAttendanceRecord(id, requestingUser);
     const [attendance] = await this.databaseService.db
       .delete(attendanceTable)
       .where(eq(attendanceTable.id, id))
@@ -124,10 +136,27 @@ export class AttendanceService {
     await this.recalculateStudentAttendance(attendance.studentId);
   }
 
-  private async validateRelations(studentId: string, classId?: string) {
-    const [student] = await this.databaseService.db.select({ id: studentsTable.id }).from(studentsTable).where(eq(studentsTable.id, studentId)).limit(1);
+  private async validateRelations(studentId: string, classId?: string, requestingUser?: RequestingUser) {
+    const [student] = await this.databaseService.db
+      .select({ id: studentsTable.id, className: studentsTable.className })
+      .from(studentsTable)
+      .where(eq(studentsTable.id, studentId))
+      .limit(1);
     if (!student) throw new NotFoundException("Student not found");
+    // Reported as "not found", same as a missing student, so the response can't be used to probe
+    // which ids exist on the other side.
+    assertPortalAccess(requestingUser, student.className, "Student not found");
     if (classId) await this.validateClass(classId);
+  }
+
+  /** Write-side counterpart of buildScopeCondition: rejects the whole batch if any student belongs to another portal. */
+  private async assertStudentsInPortal(studentIds: string[], requestingUser?: RequestingUser) {
+    if (!callerPortal(requestingUser) || !studentIds.length) return;
+    const students = await this.databaseService.db
+      .select({ id: studentsTable.id, className: studentsTable.className })
+      .from(studentsTable)
+      .where(inArray(studentsTable.id, studentIds));
+    for (const student of students) assertPortalAccess(requestingUser, student.className, "Student not found");
   }
 
   private async validateClass(classId: string) {
