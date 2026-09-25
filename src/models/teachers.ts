@@ -1,8 +1,8 @@
 import cuid from "common/cuid";
 import usersTable from "models/users";
-import { pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { numeric, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
-export const teacherAttendanceEnum = pgEnum("teacher_attendance", ["PRESENT", "LATE", "ABSENT"]);
+export const teacherAttendanceEnum = pgEnum("teacher_attendance", ["PRESENT", "LATE", "ABSENT", "ON_LEAVE"]);
 export type TeacherAttendance = (typeof teacherAttendanceEnum.enumValues)[number];
 
 const teachersTable = pgTable("teachers", {
@@ -17,6 +17,10 @@ const teachersTable = pgTable("teachers", {
   qualifications: text(),
   bio: text(),
   attendance: teacherAttendanceEnum().default("PRESENT").notNull(),
+  // Monthly salary. Nullable: older teacher rows and any profile created before this field
+  // existed have no figure yet, and the payroll job (school.service.ts-adjacent) simply skips
+  // a teacher with no salary set rather than treating it as zero.
+  salary: numeric({ precision: 10, scale: 2 }),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });

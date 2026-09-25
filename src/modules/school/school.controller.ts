@@ -232,8 +232,13 @@ export class SchoolController {
   @RequirePermission("documents", "CREATE")
   @Post("documents/upload")
   @UseInterceptors(FileInterceptor("file"))
-  async uploadDocument(@UploadedFile() file: any, @Body() dto: CreateDocumentDto, @User("userId") userId: string) {
-    return { data: await this.schoolService.uploadDocument(file, dto, userId) };
+  async uploadDocument(
+    @UploadedFile() file: any,
+    @Body() dto: CreateDocumentDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.uploadDocument(file, dto, userId, role) };
   }
 
   @RequirePermission("documents", "READ")
@@ -361,25 +366,25 @@ export class SchoolController {
     return { message: "Leave request deleted successfully" };
   }
 
-  @RequirePermission("settings", "MANAGE")
+  @RequirePermission("expenses", "CREATE")
   @Post("income")
   async createIncome(@Body() dto: CreateIncomeDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.createIncome(dto, userId, { userId, role }) };
   }
 
-  @RequirePermission("settings", "READ")
+  @RequirePermission("expenses", "READ")
   @Get("income")
   async getIncome(@User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.getIncome({ userId, role }) };
   }
 
-  @RequirePermission("settings", "READ")
+  @RequirePermission("expenses", "READ")
   @Get("income/:id")
   async getIncomeEntry(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.getIncomeEntry(id, { userId, role }) };
   }
 
-  @RequirePermission("settings", "MANAGE")
+  @RequirePermission("expenses", "UPDATE")
   @Patch("income/:id")
   async updateIncome(
     @Param() { id }: ParamDto,
@@ -390,32 +395,32 @@ export class SchoolController {
     return { data: await this.schoolService.updateIncome(id, dto, { userId, role }) };
   }
 
-  @RequirePermission("settings", "MANAGE")
+  @RequirePermission("expenses", "DELETE")
   @Delete("income/:id")
   async deleteIncome(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
     await this.schoolService.deleteIncome(id, { userId, role });
     return { message: "Income entry deleted successfully" };
   }
 
-  @RequirePermission("settings", "MANAGE")
+  @RequirePermission("expenses", "CREATE")
   @Post("expenses")
   async createExpense(@Body() dto: CreateExpenseDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.createExpense(dto, userId, { userId, role }) };
   }
 
-  @RequirePermission("settings", "READ")
+  @RequirePermission("expenses", "READ")
   @Get("expenses")
   async getExpenses(@User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.getExpenses({ userId, role }) };
   }
 
-  @RequirePermission("settings", "READ")
+  @RequirePermission("expenses", "READ")
   @Get("expenses/:id")
   async getExpense(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.getExpense(id, { userId, role }) };
   }
 
-  @RequirePermission("settings", "MANAGE")
+  @RequirePermission("expenses", "UPDATE")
   @Patch("expenses/:id")
   async updateExpense(
     @Param() { id }: ParamDto,
@@ -426,7 +431,7 @@ export class SchoolController {
     return { data: await this.schoolService.updateExpense(id, dto, { userId, role }) };
   }
 
-  @RequirePermission("settings", "MANAGE")
+  @RequirePermission("expenses", "DELETE")
   @Delete("expenses/:id")
   async deleteExpense(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
     await this.schoolService.deleteExpense(id, { userId, role });
@@ -509,11 +514,13 @@ export class SchoolController {
   @RequirePermission("daycare-reports", "READ")
   @Get("daycare-reports")
   async getDaycareReports(
+    @Query("fromDate") fromDate: string | undefined,
+    @Query("toDate") toDate: string | undefined,
     @User("userId") userId: string,
     @User("role") role: string,
     @User("portal") portal?: SchoolPortal
   ) {
-    return { data: await this.schoolService.getDaycareReports({ userId, role, portal }) };
+    return { data: await this.schoolService.getDaycareReports({ userId, role, portal }, { fromDate, toDate }) };
   }
 
   @RequirePermission("daycare-reports", "READ")
@@ -651,16 +658,23 @@ export class SchoolController {
     return { data: await this.schoolService.upsertSettings(dto) };
   }
 
-  @RequirePermission("teachers", "READ")
+  @RequirePermission("staff-attendance", "READ")
   @Get("staff-attendance")
   async getStaffAttendance(@Query() query: any, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.getStaffAttendance(query, { userId, role }) };
   }
 
-  @RequirePermission("teachers", "UPDATE")
+  @RequirePermission("staff-attendance", "UPDATE")
   @Post("staff-attendance/bulk")
   async bulkMarkStaffAttendance(@Body() dto: any, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.bulkMarkStaffAttendance(dto, userId, { userId, role }) };
+  }
+
+  @RequirePermission("staff-attendance", "UPDATE")
+  @Post("staff-attendance/submit")
+  async submitStaffAttendance(@Body() dto: { date: string }, @User("userId") userId: string, @User("role") role: string) {
+    await this.schoolService.submitStaffAttendance(dto.date, { userId, role });
+    return { message: "Attendance submitted" };
   }
 
 }

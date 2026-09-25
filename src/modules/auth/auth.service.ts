@@ -26,7 +26,8 @@ const portalRoleToUserRole: Record<PortalRole, UserRole> = {
   daycare_admin: "DAYCAREADMIN",
   principal: "PRINCIPAL",
   teacher: "TEACHER",
-  parent: "PARENT"
+  parent: "PARENT",
+  accountant: "ACCOUNTANT"
 };
 
 const userRoleToPortalRole: Record<UserRole, PortalRole> = {
@@ -34,7 +35,8 @@ const userRoleToPortalRole: Record<UserRole, PortalRole> = {
   DAYCAREADMIN: "daycare_admin",
   PRINCIPAL: "principal",
   TEACHER: "teacher",
-  PARENT: "parent"
+  PARENT: "parent",
+  ACCOUNTANT: "accountant"
 };
 
 @Injectable()

@@ -3,7 +3,7 @@ import { IsEmail, IsIn, IsOptional, IsString, Length, MinLength, ValidateIf } fr
 import { normalizePortalRole } from "common/role-normalizer";
 import { Trim } from "common/transformer";
 
-export const portalRoles = ["admin", "daycare_admin", "principal", "teacher", "parent"] as const;
+export const portalRoles = ["admin", "daycare_admin", "principal", "teacher", "parent", "accountant"] as const;
 export type PortalRole = (typeof portalRoles)[number];
 
 export class LoginDto {

@@ -27,6 +27,11 @@ export class CreateStudentDto {
   @Trim()
   className: string;
 
+  @IsOptional()
+  @IsString({ message: "Section must be a string" })
+  @Trim()
+  section?: string;
+
   // Daycare children (Infant/Toddler rooms) have their age collected in months rather than
   // years, so this bound has to be wide enough to cover both units (e.g. a 2-month-old infant,
   // or an 18-year-old in the regular preschool).
@@ -84,6 +89,11 @@ export class UpdateStudentDto {
   @IsString({ message: "Class name must be a string" })
   @Trim()
   className?: string;
+
+  @IsOptional()
+  @IsString({ message: "Section must be a string" })
+  @Trim()
+  section?: string;
 
   @IsOptional()
   @Type(() => Number)

@@ -1,7 +1,7 @@
 import cuid from "common/cuid";
 import { pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
-export const userRoleEnum = pgEnum("user_role", ["ADMIN", "DAYCAREADMIN", "PRINCIPAL", "TEACHER", "PARENT"]);
+export const userRoleEnum = pgEnum("user_role", ["ADMIN", "DAYCAREADMIN", "PRINCIPAL", "TEACHER", "PARENT", "ACCOUNTANT"]);
 export type UserRole = (typeof userRoleEnum.enumValues)[number];
 
 export const userStatusEnum = pgEnum("user_status", ["ACTIVE", "INACTIVE"]);

@@ -21,6 +21,10 @@ export class CreateClassDto {
   @Trim()
   academicYear?: string;
 
+  @IsOptional()
+  @IsIn(["Kindervale", "Daycare"], { message: "Portal must be Kindervale or Daycare" })
+  portal?: "Kindervale" | "Daycare";
+
   @Type(() => Number)
   @IsInt({ message: "Capacity must be an integer" })
   @Min(1, { message: "Capacity must be at least 1" })
@@ -47,6 +51,10 @@ export class UpdateClassDto {
   @IsString({ message: "Academic year must be a string" })
   @Trim()
   academicYear?: string;
+
+  @IsOptional()
+  @IsIn(["Kindervale", "Daycare"], { message: "Portal must be Kindervale or Daycare" })
+  portal?: "Kindervale" | "Daycare";
 
   @IsOptional()
   @Type(() => Number)

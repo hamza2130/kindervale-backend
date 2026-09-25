@@ -50,6 +50,34 @@ export class ClassroomService implements OnApplicationBootstrap {
     return classRoom;
   }
 
+  /**
+   * Points `classId` at `homeroomTeacherUserId` as its homeroom teacher, clearing that teacher off
+   * whichever other class they were previously homeroom of (a teacher can only be homeroom of one
+   * class at a time; a class already enforces one homeroom teacher just by having a single column).
+   * Used by teacher.service.ts when an admin ticks "make homeroom teacher of this class".
+   */
+  async setHomeroomTeacher(classId: string, homeroomTeacherUserId: string): Promise<void> {
+    await this.validateTeacherExistsAndIsTeacher(homeroomTeacherUserId);
+    await this.getClass(classId);
+
+    const [previousClass] = await this.databaseService.db
+      .select({ id: classesTable.id })
+      .from(classesTable)
+      .where(and(eq(classesTable.homeroomTeacherId, homeroomTeacherUserId), ne(classesTable.id, classId)))
+      .limit(1);
+    if (previousClass) {
+      await this.databaseService.db
+        .update(classesTable)
+        .set({ homeroomTeacherId: null, updatedAt: new Date() })
+        .where(eq(classesTable.id, previousClass.id));
+    }
+
+    await this.databaseService.db
+      .update(classesTable)
+      .set({ homeroomTeacherId: homeroomTeacherUserId, updatedAt: new Date() })
+      .where(eq(classesTable.id, classId));
+  }
+
   async getClasses(query: ClassListQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -76,7 +104,7 @@ export class ClassroomService implements OnApplicationBootstrap {
   }
 
   async updateClass(id: string, dto: UpdateClassDto): Promise<ClassRoom> {
-    await this.validateTeacher(dto.homeroomTeacherId);
+    await this.validateTeacher(dto.homeroomTeacherId, id);
     if (dto.name) await this.ensureClassNameAvailable(dto.name, id);
 
     const [classRoom] = await this.databaseService.db
@@ -143,11 +171,34 @@ export class ClassroomService implements OnApplicationBootstrap {
     if (!section) throw new NotFoundException("Section not found");
   }
 
-  private async validateTeacher(userId?: string) {
-    if (!userId) return;
+  private async validateTeacherExistsAndIsTeacher(userId: string) {
     const [user] = await this.databaseService.db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
     if (!user) throw new NotFoundException("Homeroom teacher user not found");
     if (user.role !== "TEACHER") throw new ConflictException("Homeroom teacher user role must be TEACHER");
+  }
+
+  /**
+   * Used by direct class create/update (the Classes & Sections admin page): rejects assigning a
+   * homeroom teacher who already has a different homeroom class, rather than silently moving them
+   * -- editing a class directly should surface that conflict, not resolve it for you.
+   * `excludeClassId` lets an update re-save a class's own existing homeroom teacher without
+   * tripping this check against itself.
+   */
+  private async validateTeacher(userId?: string, excludeClassId?: string) {
+    if (!userId) return;
+    await this.validateTeacherExistsAndIsTeacher(userId);
+
+    const conflictWhere = excludeClassId
+      ? and(eq(classesTable.homeroomTeacherId, userId), ne(classesTable.id, excludeClassId))
+      : eq(classesTable.homeroomTeacherId, userId);
+    const [existingHomeroom] = await this.databaseService.db
+      .select({ id: classesTable.id, name: classesTable.name })
+      .from(classesTable)
+      .where(conflictWhere)
+      .limit(1);
+    if (existingHomeroom) {
+      throw new ConflictException(`This teacher is already homeroom teacher of ${existingHomeroom.name}`);
+    }
   }
 
   private async ensureClassNameAvailable(name: string, classId?: string) {

@@ -1,5 +1,5 @@
 import { staffAttendanceTable } from "models/school";
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
 import {
   assertExactPortalAccess,
@@ -253,8 +253,22 @@ export class SchoolService {
     return this.insert(documentsTable, { ...dto, fileUrl: dto.fileUrl, uploadedBy }, "document");
   }
 
-  async uploadDocument(file: any, dto: CreateDocumentDto, uploadedBy?: string) {
+  async uploadDocument(file: any, dto: CreateDocumentDto, uploadedBy?: string, uploaderRole?: string) {
     if (!file?.buffer || !file?.originalname) throw new BadRequestException("File is required");
+
+    // Class photos previously had only a client-side check tying the upload to the teacher's own
+    // homeroom -- trivially bypassed by calling this endpoint directly. Admin/Principal/Daycare
+    // Admin aren't uploading "as" a homeroom teacher, so this only applies to TEACHER callers.
+    if (dto.kind === "classPhoto" && (uploaderRole ?? "").trim().toUpperCase() === "TEACHER" && dto.cls) {
+      const [classRoom] = await this.databaseService.db
+        .select({ homeroomTeacherId: classesTable.homeroomTeacherId })
+        .from(classesTable)
+        .where(eq(classesTable.name, dto.cls))
+        .limit(1);
+      if (!classRoom || classRoom.homeroomTeacherId !== uploadedBy) {
+        throw new ForbiddenException("You can only upload photos for your own homeroom class");
+      }
+    }
 
     const originalName = basename(String(file.originalname));
     const mimeType = file.mimetype || "application/octet-stream";
@@ -578,8 +592,16 @@ export class SchoolService {
     return this.insert(daycareReportsTable, { ...dto, createdBy }, "daycare report");
   }
 
-  async getDaycareReports(requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }) {
-    const rows = await this.databaseService.db.select().from(daycareReportsTable);
+  async getDaycareReports(
+    requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null },
+    dateRange?: { fromDate?: string; toDate?: string }
+  ) {
+    const conditions: SQL[] = [];
+    if (dateRange?.fromDate) conditions.push(gte(daycareReportsTable.date, dateRange.fromDate));
+    if (dateRange?.toDate) conditions.push(lte(daycareReportsTable.date, dateRange.toDate));
+    const where = conditions.length ? and(...conditions) : undefined;
+
+    const rows = await this.databaseService.db.select().from(daycareReportsTable).where(where);
     return this.scopeRowsToPortal(await this.scopeRowsToParent(rows, requestingUser), requestingUser);
   }
 
@@ -1047,8 +1069,11 @@ export class SchoolService {
         teacherId: staffAttendanceTable.teacherId,
         date: staffAttendanceTable.date,
         status: staffAttendanceTable.status,
+        arrivalTime: staffAttendanceTable.arrivalTime,
+        departureTime: staffAttendanceTable.departureTime,
         remarks: staffAttendanceTable.remarks,
         markedBy: staffAttendanceTable.markedBy,
+        submitted: staffAttendanceTable.submitted,
         createdAt: staffAttendanceTable.createdAt,
         updatedAt: staffAttendanceTable.updatedAt,
         teacherClassName: teachersTable.className
@@ -1064,7 +1089,10 @@ export class SchoolService {
   }
 
   async bulkMarkStaffAttendance(
-    dto: { date: string; records: { teacherId: string; status: string; remarks?: string }[] },
+    dto: {
+      date: string;
+      records: { teacherId: string; status: string; arrivalTime?: string; departureTime?: string; remarks?: string }[];
+    },
     markedBy?: string,
     requestingUser?: { userId: string; role: string }
   ) {
@@ -1091,6 +1119,12 @@ export class SchoolService {
     const results: any[] = [];
 
     for (const rec of dto.records) {
+      // Only PRESENT/LATE carry a real arrival/departure; ABSENT/ON_LEAVE never do, regardless
+      // of what the client sent.
+      const hasTimes = rec.status === "PRESENT" || rec.status === "LATE";
+      const arrivalTime = hasTimes ? rec.arrivalTime : null;
+      const departureTime = hasTimes ? rec.departureTime : null;
+
       const [existing] = await this.databaseService.db
         .select({ id: staffAttendanceTable.id })
         .from(staffAttendanceTable)
@@ -1100,19 +1134,49 @@ export class SchoolService {
       if (existing) {
         const [updated] = await this.databaseService.db
           .update(staffAttendanceTable)
-          .set({ status: rec.status as any, remarks: rec.remarks, markedBy, updatedAt: new Date() })
+          .set({ status: rec.status as any, arrivalTime, departureTime, remarks: rec.remarks, markedBy, updatedAt: new Date() })
           .where(eq(staffAttendanceTable.id, existing.id))
           .returning();
         results.push(updated);
       } else {
         const [created] = await this.databaseService.db
           .insert(staffAttendanceTable)
-          .values({ teacherId: rec.teacherId, date, status: rec.status as any, remarks: rec.remarks, markedBy })
+          .values({ teacherId: rec.teacherId, date, status: rec.status as any, arrivalTime, departureTime, remarks: rec.remarks, markedBy })
           .returning();
         results.push(created);
       }
     }
     return results;
+  }
+
+  /** Finalizes a day's staff attendance -- flips every row for that date, within the caller's
+   * portal, from draft to submitted. Rows stay editable afterward; this only affects the
+   * draft/submitted badge shown in the UI. */
+  async submitStaffAttendance(date: string, requestingUser?: { userId: string; role: string }): Promise<void> {
+    const normalizedDate = date.slice(0, 10);
+    const required = callerPortal(requestingUser?.role);
+
+    if (!required) {
+      await this.databaseService.db
+        .update(staffAttendanceTable)
+        .set({ submitted: true, updatedAt: new Date() })
+        .where(eq(staffAttendanceTable.date, normalizedDate));
+      return;
+    }
+
+    const rows = await this.databaseService.db
+      .select({ id: staffAttendanceTable.id, className: teachersTable.className })
+      .from(staffAttendanceTable)
+      .leftJoin(teachersTable, eq(staffAttendanceTable.teacherId, teachersTable.id))
+      .where(eq(staffAttendanceTable.date, normalizedDate));
+
+    const idsInPortal = rows.filter((row) => classNameToPortal(row.className) === required).map((row) => row.id);
+    if (!idsInPortal.length) return;
+
+    await this.databaseService.db
+      .update(staffAttendanceTable)
+      .set({ submitted: true, updatedAt: new Date() })
+      .where(inArray(staffAttendanceTable.id, idsInPortal));
   }
 
 }
