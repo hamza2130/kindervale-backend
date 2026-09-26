@@ -1,6 +1,7 @@
 import { staffAttendanceTable } from "models/school";
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
+import { expiredClassPhotoSql, isExpiredClassPhoto } from "modules/school/class-photo";
 import {
   assertExactPortalAccess,
   assertPortalAccess,
@@ -308,7 +309,9 @@ export class SchoolService {
     const conditions: SQL[] = [];
     if (query.type) conditions.push(eq(documentsTable.type, query.type as any));
     if (query.uploadedBy) conditions.push(eq(documentsTable.uploadedBy, query.uploadedBy));
-    return this.databaseService.db.select().from(documentsTable).where(conditions.length ? and(...conditions) : undefined);
+    // Expired class photos are hidden even if the hourly cleanup hasn't removed them yet.
+    conditions.push(sql`not (${expiredClassPhotoSql()})`);
+    return this.databaseService.db.select().from(documentsTable).where(and(...conditions));
   }
 
   getDocument(id: string) {
@@ -317,6 +320,7 @@ export class SchoolService {
 
   async streamDocument(id: string, response: Response) {
     const document = await this.getDocument(id);
+    if (isExpiredClassPhoto(document)) throw new NotFoundException("This photo has expired");
     const metadata = this.parseDocumentMetadata(document.description);
     const contentType = metadata.mimeType || "application/octet-stream";
     const fileName = metadata.originalName || document.title;
