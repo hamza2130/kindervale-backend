@@ -80,6 +80,8 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
   },
   ACCOUNTANT: {
     dashboard: ["READ"],
+    // Read-only: fee rows only carry a student id, so the accountant needs names to make sense of them.
+    students: ["READ"],
     expenses: ["CREATE", "READ", "UPDATE", "DELETE"],
     fees: ["CREATE", "READ", "UPDATE"]
   },
