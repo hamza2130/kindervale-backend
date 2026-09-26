@@ -1,6 +1,7 @@
 import { Module, NestModule, MiddlewareConsumer } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { APP_GUARD } from "@nestjs/core";
+import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { join } from "node:path";
 import { LoggerMiddleware } from "middleware/logger.middleware";
@@ -12,8 +13,8 @@ import { DatabaseModule } from "modules/database/database.module";
 import { HashModule } from "modules/hash/hash.module";
 import { HomeworkModule } from "modules/homework/homework.module";
 import { JWTModule } from "modules/jwt/jwt.module";
-import { LessonPlanModule } from "modules/lesson-plan/lesson-plan.module";
 import { ParentModule } from "modules/parent/parent.module";
+import { PayrollModule } from "modules/payroll/payroll.module";
 import { RoleModule } from "modules/role/role.module";
 import { SchoolModule } from "modules/school/school.module";
 import { StudentModule } from "modules/student/student.module";
@@ -30,6 +31,7 @@ import { UserModule } from "modules/user/user.module";
       isGlobal: true,
       envFilePath: [join(process.cwd(), ".env"), join(process.cwd(), "..", ".env")]
     }),
+    ScheduleModule.forRoot(),
     DatabaseModule,
     JWTModule,
     HashModule,
@@ -40,8 +42,8 @@ import { UserModule } from "modules/user/user.module";
     AdminModule,
     AttendanceModule,
     HomeworkModule,
-    LessonPlanModule,
     ParentModule,
+    PayrollModule,
     StudentModule,
     SubjectModule,
     TeacherModule,

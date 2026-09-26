@@ -1,7 +1,7 @@
 import cuid from "common/cuid";
 import usersTable from "models/users";
 import teachersTable, { teacherAttendanceEnum } from "models/teachers";
-import { date, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, date, integer, jsonb, numeric, pgEnum, pgTable, text, time, timestamp, unique } from "drizzle-orm/pg-core";
 
 export const feeStatusEnum = pgEnum("fee_status", ["PAID", "PENDING", "PARTIAL"]);
 export type FeeStatus = (typeof feeStatusEnum.enumValues)[number];
@@ -52,6 +52,7 @@ export const studentsTable = pgTable("students", {
   parentId: text().references(() => parentsTable.id, { onDelete: "set null" }),
   name: text().notNull(),
   className: text().notNull(),
+  section: text(),
   age: integer().notNull(),
   birthday: date(),
   attendance: integer().default(0).notNull(),
@@ -68,6 +69,10 @@ export const classesTable = pgTable("classes", {
   homeroomTeacherId: text().references(() => usersTable.id, { onDelete: "set null" }),
   academicYear: text(),
   capacity: integer().notNull(),
+  // Which portal this class belongs to. Existing seeded/default classes are matched against the
+  // hardcoded DAYCARE_CLASS_NAMES list in common/portal-scope.ts when this is unset, so backfill
+  // isn't required -- only classes created after this field existed rely on it being set directly.
+  portal: text().default("Kindervale").notNull(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });
@@ -254,6 +259,12 @@ export const expensesTable = pgTable("expenses", {
   // "Kindervale" so existing untagged rows keep showing where they already did.
   portal: text().default("Kindervale").notNull(),
   createdBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+  // Set only on rows the monthly payroll job creates automatically (models/school.ts's
+  // staffAttendanceTable-adjacent teacher.salary -> here). Used purely to check "has this
+  // teacher's salary already been expensed for this month" before inserting -- never read for
+  // display. Both null on every manually-entered expense.
+  payrollTeacherId: text().references(() => usersTable.id, { onDelete: "set null" }),
+  payrollPeriod: text(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });
@@ -440,8 +451,15 @@ export const staffAttendanceTable = pgTable("staff_attendance", {
     .references(() => teachersTable.id, { onDelete: "cascade" }),
   date: date().notNull(),
   status: teacherAttendanceEnum().notNull().default("PRESENT"),
+  // Only meaningful for PRESENT/LATE; left null for ABSENT/ON_LEAVE.
+  arrivalTime: time(),
+  departureTime: time(),
   remarks: text(),
   markedBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+  // A day's rows start as drafts as they're marked one by one; POST /staff-attendance/submit
+  // flips every row for that date (within the caller's portal) to true. Rows stay editable
+  // afterward -- this is a visibility flag for the principal's view, not a lock.
+  submitted: boolean().default(false).notNull(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });

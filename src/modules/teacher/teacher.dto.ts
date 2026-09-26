@@ -1,5 +1,5 @@
-import { Type } from "class-transformer";
-import { IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { Transform, Type } from "class-transformer";
+import { IsBoolean, IsEnum, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from "class-validator";
 import { Trim } from "common/transformer";
 import { teacherAttendanceEnum, type TeacherAttendance } from "models/teachers";
 
@@ -36,6 +36,19 @@ export class CreateTeacherDto {
     message: `Attendance must be one of: ${teacherAttendanceEnum.enumValues.join(", ")}`
   })
   attendance?: TeacherAttendance;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: "Salary must be a number" })
+  @Min(0, { message: "Salary cannot be negative" })
+  salary?: number;
+
+  // If true, this teacher becomes the homeroom teacher of `className` (matched by class name --
+  // the form only knows the class it just assigned via className above, not a separate classId).
+  @IsOptional()
+  @Transform(({ value }) => (value === "true" || value === true ? true : value === "false" || value === false ? false : value))
+  @IsBoolean({ message: "makeHomeroom must be a boolean" })
+  makeHomeroom?: boolean;
 }
 
 export class UpdateTeacherDto {
@@ -79,6 +92,17 @@ export class UpdateTeacherDto {
     message: `Attendance must be one of: ${teacherAttendanceEnum.enumValues.join(", ")}`
   })
   attendance?: TeacherAttendance;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({}, { message: "Salary must be a number" })
+  @Min(0, { message: "Salary cannot be negative" })
+  salary?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => (value === "true" || value === true ? true : value === "false" || value === false ? false : value))
+  @IsBoolean({ message: "makeHomeroom must be a boolean" })
+  makeHomeroom?: boolean;
 }
 
 export class TeacherListQueryDto {

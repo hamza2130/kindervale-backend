@@ -163,6 +163,41 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "portal" text NOT NULL DEFAULT 'Kindervale'
       `);
 
+      // Accountant role + homeroom teachers + payroll automation + classes/sections portal
+      // tagging + student sections + staff-attendance times/submit (see models/users.ts,
+      // teachers.ts, school.ts). Enum values can't use IF NOT EXISTS-on-the-type -- ADD VALUE
+      // IF NOT EXISTS is the idempotent form Postgres actually supports for this.
+      await this.db.execute(sql`ALTER TYPE "user_role" ADD VALUE IF NOT EXISTS 'ACCOUNTANT'`);
+      await this.db.execute(sql`ALTER TYPE "teacher_attendance" ADD VALUE IF NOT EXISTS 'ON_LEAVE'`);
+
+      await this.db.execute(sql`
+        ALTER TABLE "teachers"
+          ADD COLUMN IF NOT EXISTS "salary" numeric(10, 2)
+      `);
+
+      await this.db.execute(sql`
+        ALTER TABLE "classes"
+          ADD COLUMN IF NOT EXISTS "portal" text NOT NULL DEFAULT 'Kindervale'
+      `);
+
+      await this.db.execute(sql`
+        ALTER TABLE "students"
+          ADD COLUMN IF NOT EXISTS "section" text
+      `);
+
+      await this.db.execute(sql`
+        ALTER TABLE "staff_attendance"
+          ADD COLUMN IF NOT EXISTS "arrival_time" time,
+          ADD COLUMN IF NOT EXISTS "departure_time" time,
+          ADD COLUMN IF NOT EXISTS "submitted" boolean NOT NULL DEFAULT false
+      `);
+
+      await this.db.execute(sql`
+        ALTER TABLE "expenses"
+          ADD COLUMN IF NOT EXISTS "payroll_teacher_id" text REFERENCES "users"("id") ON DELETE SET NULL,
+          ADD COLUMN IF NOT EXISTS "payroll_period" text
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);

@@ -1,12 +1,20 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, count, desc, eq, ilike, inArray, notInArray, or, type SQL } from "drizzle-orm";
 import { assertPortalAccess, assertPortalForCreate, callerPortal, DAYCARE_CLASS_NAMES } from "common/portal-scope";
+import { classesTable } from "models/school";
 import teachersTable, { type Teacher } from "models/teachers";
 import usersTable from "models/users";
+import { ClassroomService } from "modules/classroom/classroom.service";
 import { DatabaseService } from "modules/database/database.service";
 import type { CreateTeacherDto, TeacherListQueryDto, UpdateTeacherDto } from "modules/teacher/teacher.dto";
 
 type RequestingUser = { userId: string; role: string };
+
+// Admin now creates and manages staff for BOTH portals (Daycare Admin no longer can), so the
+// teachers module is the one deliberate exception to the portal boundary the rest of the app
+// enforces for Admin. Every other module (students, fees, expenses, daycare-reports, ...) is
+// unaffected -- this check is local to this file, not a change to callerPortal() itself.
+const isAdminRole = (role?: string): boolean => (role ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "") === "ADMIN";
 
 /** Shape returned by the teacher list/detail endpoints once joined with users. */
 export type TeacherWithUser = Teacher & {
@@ -16,12 +24,17 @@ export type TeacherWithUser = Teacher & {
 
 @Injectable()
 export class TeacherService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly classroomService: ClassroomService
+  ) {}
 
   async createTeacher(dto: CreateTeacherDto, requestingUser?: RequestingUser): Promise<Teacher> {
     // Same gap as students: a Daycare Admin's token had nothing but client-side validation
-    // stopping it creating a Kindervale staff record.
-    assertPortalForCreate(requestingUser?.role, dto.className);
+    // stopping it creating a Kindervale staff record. Admin is exempt -- see isAdminRole.
+    if (!isAdminRole(requestingUser?.role)) {
+      assertPortalForCreate(requestingUser?.role, dto.className);
+    }
     const [user] = await this.databaseService.db.select().from(usersTable).where(eq(usersTable.id, dto.userId)).limit(1);
 
     if (!user) {
@@ -42,20 +55,38 @@ export class TeacherService {
       throw new ConflictException("Teacher profile already exists for this user");
     }
 
-    const [teacher] = await this.databaseService.db.insert(teachersTable).values(dto).returning();
+    const { makeHomeroom, salary, ...teacherFields } = dto;
+    const [teacher] = await this.databaseService.db
+      .insert(teachersTable)
+      .values({ ...teacherFields, salary: salary?.toString() })
+      .returning();
 
     if (!teacher) {
       throw new ConflictException("Failed to create teacher");
     }
 
+    if (makeHomeroom) await this.applyHomeroom(teacher.userId, dto.className);
+
     return teacher;
+  }
+
+  /** Resolves className -> class id and delegates to ClassroomService, which handles reassignment. */
+  private async applyHomeroom(teacherUserId: string, className: string): Promise<void> {
+    const [classRoom] = await this.databaseService.db
+      .select({ id: classesTable.id })
+      .from(classesTable)
+      .where(eq(classesTable.name, className))
+      .limit(1);
+    if (!classRoom) throw new NotFoundException(`No class named "${className}" to make this teacher homeroom of`);
+    await this.classroomService.setHomeroomTeacher(classRoom.id, teacherUserId);
   }
 
   async getTeachers(query: TeacherListQueryDto, requestingUser?: RequestingUser) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const offset = (page - 1) * limit;
-    const where = this.applyPortalFilter(this.buildTeacherWhere(query), requestingUser?.role);
+    const baseWhere = this.buildTeacherWhere(query);
+    const where = isAdminRole(requestingUser?.role) ? baseWhere : this.applyPortalFilter(baseWhere, requestingUser?.role);
     const sortColumn = teachersTable[query.sortBy ?? "createdAt"];
     const orderBy = query.sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn);
 
@@ -70,6 +101,7 @@ export class TeacherService {
           qualifications: teachersTable.qualifications,
           bio: teachersTable.bio,
           attendance: teachersTable.attendance,
+          salary: teachersTable.salary,
           createdAt: teachersTable.createdAt,
           updatedAt: teachersTable.updatedAt,
           name: usersTable.name,
@@ -106,6 +138,7 @@ export class TeacherService {
         qualifications: teachersTable.qualifications,
         bio: teachersTable.bio,
         attendance: teachersTable.attendance,
+        salary: teachersTable.salary,
         createdAt: teachersTable.createdAt,
         updatedAt: teachersTable.updatedAt,
         name: usersTable.name,
@@ -119,7 +152,9 @@ export class TeacherService {
     if (!teacher) {
       throw new NotFoundException("Teacher not found");
     }
-    assertPortalAccess(requestingUser?.role, teacher.className, "Teacher not found");
+    if (!isAdminRole(requestingUser?.role)) {
+      assertPortalAccess(requestingUser?.role, teacher.className, "Teacher not found");
+    }
 
     return teacher as TeacherWithUser;
   }
@@ -141,6 +176,7 @@ export class TeacherService {
         qualifications: teachersTable.qualifications,
         bio: teachersTable.bio,
         attendance: teachersTable.attendance,
+        salary: teachersTable.salary,
         createdAt: teachersTable.createdAt,
         updatedAt: teachersTable.updatedAt,
         name: usersTable.name,
@@ -193,9 +229,10 @@ export class TeacherService {
   // their own profile is never portal-restricted, since it's already their own record by
   // definition.
   async updateTeacher(id: string, dto: UpdateTeacherDto, requestingUser?: RequestingUser): Promise<TeacherWithUser> {
-    const { name, ...teacherFields } = dto;
+    const { name, makeHomeroom, salary, ...teacherFields } = dto;
+    const adminCaller = isAdminRole(requestingUser?.role);
 
-    if (requestingUser) {
+    if (requestingUser && !adminCaller) {
       const [existing] = await this.databaseService.db
         .select({ className: teachersTable.className })
         .from(teachersTable)
@@ -208,13 +245,15 @@ export class TeacherService {
 
     const [teacher] = await this.databaseService.db
       .update(teachersTable)
-      .set({ ...teacherFields, updatedAt: new Date() })
+      .set({ ...teacherFields, salary: salary !== undefined ? salary.toString() : undefined, updatedAt: new Date() })
       .where(eq(teachersTable.id, id))
       .returning();
 
     if (!teacher) {
       throw new NotFoundException("Teacher not found");
     }
+
+    if (makeHomeroom) await this.applyHomeroom(teacher.userId, dto.className ?? teacher.className);
 
     if (name !== undefined) {
       await this.databaseService.db
@@ -233,6 +272,7 @@ export class TeacherService {
         qualifications: teachersTable.qualifications,
         bio: teachersTable.bio,
         attendance: teachersTable.attendance,
+        salary: teachersTable.salary,
         createdAt: teachersTable.createdAt,
         updatedAt: teachersTable.updatedAt,
         name: usersTable.name,
@@ -257,7 +297,9 @@ export class TeacherService {
       .where(eq(teachersTable.id, id))
       .limit(1);
     if (!existing) throw new NotFoundException("Teacher not found");
-    assertPortalAccess(requestingUser?.role, existing.className, "Teacher not found");
+    if (!isAdminRole(requestingUser?.role)) {
+      assertPortalAccess(requestingUser?.role, existing.className, "Teacher not found");
+    }
 
     const [teacher] = await this.databaseService.db
       .delete(teachersTable)

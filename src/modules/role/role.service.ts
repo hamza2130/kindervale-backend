@@ -26,8 +26,8 @@ const defaultModules = [
   "sections",
   "subjects",
   "attendance",
+  "staff-attendance",
   "homework",
-  "lesson-plans",
   "report-cards",
   "weekly-objectives",
   "homework-submissions",
@@ -48,15 +48,41 @@ const defaultModules = [
   "settings"
 ] as const;
 
+// ADMIN and DAYCAREADMIN used to bypass the permission table entirely (see the old
+// `userRoleCan` shortcut this replaced) -- every module they touched was seeded with MANAGE, so
+// there was never a reason to seed anything narrower. Now that finance access is split out to a
+// dedicated Accountant role and Daycare Admin's scope is cut back, these two need their actual
+// permission set enforced for the first time. seedDefaults() reconciles (not just adds) these two
+// roles' rows on every boot specifically because of that history -- see the comment there.
 const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)[number], PermissionAction[]>>> = {
-  ADMIN: Object.fromEntries(defaultModules.map((module) => [module, ["MANAGE"]])) as Record<
-    (typeof defaultModules)[number],
-    PermissionAction[]
-  >,
-  DAYCAREADMIN: Object.fromEntries(defaultModules.map((module) => [module, ["MANAGE"]])) as Record<
-    (typeof defaultModules)[number],
-    PermissionAction[]
-  >,
+  ADMIN: {
+    ...(Object.fromEntries(defaultModules.map((module) => [module, ["MANAGE"]])) as Record<
+      (typeof defaultModules)[number],
+      PermissionAction[]
+    >),
+    // Only the Accountant role may create/edit expenses and fees; Admin can see the numbers but
+    // not touch them.
+    expenses: ["READ"],
+    fees: ["READ"]
+  },
+  DAYCAREADMIN: {
+    dashboard: ["READ"],
+    students: ["MANAGE"],
+    // View-only: staff are added/edited by Admin now, but Daycare Admin still needs to see who
+    // exists to pick a name when marking staff attendance.
+    teachers: ["READ"],
+    "daycare-reports": ["MANAGE"],
+    "staff-attendance": ["MANAGE"],
+    // Generate Login, narrowed to parent logins only on the frontend -- teacher accounts are
+    // created directly through Admin's staff form now, not a separate generate-login step.
+    users: ["CREATE", "READ"],
+    parents: ["CREATE", "READ"]
+  },
+  ACCOUNTANT: {
+    dashboard: ["READ"],
+    expenses: ["CREATE", "READ", "UPDATE", "DELETE"],
+    fees: ["CREATE", "READ", "UPDATE"]
+  },
   PRINCIPAL: {
     dashboard: ["READ"],
     students: ["READ"],
@@ -66,13 +92,14 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     sections: ["READ", "UPDATE"],
     subjects: ["READ", "UPDATE"],
     attendance: ["READ"],
+    "staff-attendance": ["READ"],
     homework: ["READ"],
-    "lesson-plans": ["READ", "UPDATE"],
     "report-cards": ["READ", "UPDATE"],
     "weekly-objectives": ["READ", "UPDATE"],
     "homework-submissions": ["READ"],
     "daycare-reports": ["READ"],
     fees: ["READ"],
+    expenses: ["READ"],
     notices: ["CREATE", "READ", "UPDATE", "DELETE"],
     calendar: ["READ"],
     documents: ["READ"],
@@ -88,7 +115,6 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     subjects: ["READ"],
     attendance: ["CREATE", "READ", "UPDATE"],
     homework: ["CREATE", "READ", "UPDATE", "DELETE"],
-    "lesson-plans": ["CREATE", "READ", "UPDATE"],
     "report-cards": ["CREATE", "READ", "UPDATE"],
     // CREATE only: re-submitting replaces the previous entry server-side, so a teacher never
     // needs UPDATE, which is what approves an objective.
@@ -263,8 +289,11 @@ export class RoleService implements OnApplicationBootstrap {
   }
 
   async userRoleCan(roleName: UserRole, requirement: PermissionCheckDto): Promise<boolean> {
-    if (roleName === "ADMIN" || roleName === "DAYCAREADMIN") return true;
-
+    // No more blanket bypass for ADMIN/DAYCAREADMIN -- that's exactly what let Admin (and,
+    // until this pass, Daycare Admin) create/edit expenses and fees regardless of what
+    // defaultRoleAccess says. Both are now checked against the real permission table like every
+    // other role; seedDefaults() below reconciles their rows on every boot so this actually
+    // takes effect instead of finding the old "MANAGE everything" grants still sitting there.
     const [permission] = await this.databaseService.db
       .select({ id: permissionsTable.id })
       .from(rolesTable)
@@ -302,7 +331,46 @@ export class RoleService implements OnApplicationBootstrap {
     const roles = await this.databaseService.db.select().from(rolesTable);
     const permissions = await this.databaseService.db.select().from(permissionsTable);
 
+    // Reconciled roles: ADMIN and DAYCAREADMIN used to bypass the permission table entirely (see
+    // userRoleCan above), so every boot has been seeding them with MANAGE on everything for as
+    // long as this system has existed -- those rows are still sitting in role_permissions today.
+    // Purely-additive seeding (the loop below, kept for every other role) would never remove them,
+    // which would silently defeat the narrower access these two roles now have: the old MANAGE
+    // grants would still be found and allowed. These two are wiped and rebuilt from
+    // defaultRoleAccess exactly on every boot instead. Every other role keeps the additive
+    // behavior, so any manual tweaks made via assignPermissions() survive restarts.
+    const reconciledRoles: UserRole[] = ["ADMIN", "DAYCAREADMIN"];
     for (const role of roles) {
+      if (!reconciledRoles.includes(role.name)) continue;
+      const roleAccess = defaultRoleAccess[role.name];
+      const desiredPermissionIds = new Set(
+        Object.entries(roleAccess).flatMap(([module, actions]) =>
+          permissions.filter((permission) => permission.module === module && actions.includes(permission.action)).map((p) => p.id)
+        )
+      );
+
+      const currentGrants = await this.databaseService.db
+        .select({ id: rolePermissionsTable.id, permissionId: rolePermissionsTable.permissionId })
+        .from(rolePermissionsTable)
+        .where(eq(rolePermissionsTable.roleId, role.id));
+
+      const staleGrantIds = currentGrants.filter((grant) => !desiredPermissionIds.has(grant.permissionId)).map((grant) => grant.id);
+      if (staleGrantIds.length) {
+        await this.databaseService.db.delete(rolePermissionsTable).where(inArray(rolePermissionsTable.id, staleGrantIds));
+      }
+
+      const alreadyGranted = new Set(currentGrants.map((grant) => grant.permissionId));
+      const missing = [...desiredPermissionIds].filter((id) => !alreadyGranted.has(id));
+      if (missing.length) {
+        await this.databaseService.db
+          .insert(rolePermissionsTable)
+          .values(missing.map((permissionId) => ({ roleId: role.id, permissionId })))
+          .onConflictDoNothing();
+      }
+    }
+
+    for (const role of roles) {
+      if (reconciledRoles.includes(role.name)) continue;
       const roleAccess = defaultRoleAccess[role.name];
       for (const [module, actions] of Object.entries(roleAccess)) {
         const allowedPermissions = permissions.filter(
