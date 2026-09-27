@@ -1,6 +1,13 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, inArray, lte, ne, notInArray, sql, type SQL } from "drizzle-orm";
-import { assertPortalAccess, callerPortal, DAYCARE_CLASS_NAMES, type SchoolPortal } from "common/portal-scope";
+import {
+  assertHomeroomAccess,
+  assertPortalAccess,
+  callerPortal,
+  DAYCARE_CLASS_NAMES,
+  homeroomFilterCondition,
+  type SchoolPortal
+} from "common/portal-scope";
 import { attendanceTable, classesTable, parentsTable, studentsTable, type Attendance } from "models/school";
 import { DatabaseService } from "modules/database/database.service";
 import type {
@@ -10,7 +17,7 @@ import type {
   UpdateAttendanceDto
 } from "modules/attendance/attendance.dto";
 
-type RequestingUser = { userId: string; role: string; portal?: SchoolPortal | null };
+type RequestingUser = { userId: string; role: string; portal?: SchoolPortal | null; homeroomClassName?: string | null };
 
 @Injectable()
 export class AttendanceService {
@@ -146,17 +153,22 @@ export class AttendanceService {
     // Reported as "not found", same as a missing student, so the response can't be used to probe
     // which ids exist on the other side.
     assertPortalAccess(requestingUser, student.className, "Student not found");
+    // Decision 7: a teacher may only mark attendance for their own homeroom class.
+    assertHomeroomAccess(requestingUser, student.className, "Student not found");
     if (classId) await this.validateClass(classId);
   }
 
-  /** Write-side counterpart of buildScopeCondition: rejects the whole batch if any student belongs to another portal. */
+  /** Write-side counterpart of buildScopeCondition: rejects the whole batch if any student belongs to another portal or, for a teacher, another class. */
   private async assertStudentsInPortal(studentIds: string[], requestingUser?: RequestingUser) {
-    if (!callerPortal(requestingUser) || !studentIds.length) return;
+    if ((!callerPortal(requestingUser) && !requestingUser?.homeroomClassName) || !studentIds.length) return;
     const students = await this.databaseService.db
       .select({ id: studentsTable.id, className: studentsTable.className })
       .from(studentsTable)
       .where(inArray(studentsTable.id, studentIds));
-    for (const student of students) assertPortalAccess(requestingUser, student.className, "Student not found");
+    for (const student of students) {
+      assertPortalAccess(requestingUser, student.className, "Student not found");
+      assertHomeroomAccess(requestingUser, student.className, "Student not found");
+    }
   }
 
   private async validateClass(classId: string) {
@@ -222,8 +234,12 @@ export class AttendanceService {
 
     const portal = callerPortal(requestingUser);
     if (!portal) return undefined;
-    const inPortal =
-      portal === "Daycare"
+    // Decision 7: a teacher is confined further, to their own homeroom class specifically, not
+    // just their portal.
+    const homeroomCondition = homeroomFilterCondition(studentsTable.className, requestingUser);
+    const inPortal = homeroomCondition
+      ? homeroomCondition
+      : portal === "Daycare"
         ? inArray(studentsTable.className, [...DAYCARE_CLASS_NAMES])
         : notInArray(studentsTable.className, [...DAYCARE_CLASS_NAMES]);
     return inArray(attendanceTable.studentId, db.select({ id: studentsTable.id }).from(studentsTable).where(inPortal));

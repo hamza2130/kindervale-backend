@@ -24,9 +24,10 @@ export class AttendanceController {
     @Body() dto: CreateAttendanceDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    return { data: await this.attendanceService.createAttendance(dto, userId, { userId, role, portal }) };
+    return { data: await this.attendanceService.createAttendance(dto, userId, { userId, role, portal, homeroomClassName }) };
   }
 
   @RequirePermission("attendance", "CREATE")
@@ -35,9 +36,10 @@ export class AttendanceController {
     @Body() dto: BulkMarkAttendanceDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    return { data: await this.attendanceService.bulkMarkAttendance(dto, userId, { userId, role, portal }) };
+    return { data: await this.attendanceService.bulkMarkAttendance(dto, userId, { userId, role, portal, homeroomClassName }) };
   }
 
   @RequirePermission("attendance", "READ")
@@ -46,9 +48,10 @@ export class AttendanceController {
     @Query() query: AttendanceListQueryDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    return { data: await this.attendanceService.getAttendance(query, { userId, role, portal }) };
+    return { data: await this.attendanceService.getAttendance(query, { userId, role, portal, homeroomClassName }) };
   }
 
   @RequirePermission("attendance", "READ")
@@ -57,9 +60,10 @@ export class AttendanceController {
     @Param() { id }: ParamDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    return { data: await this.attendanceService.getAttendanceRecord(id, { userId, role, portal }) };
+    return { data: await this.attendanceService.getAttendanceRecord(id, { userId, role, portal, homeroomClassName }) };
   }
 
   @RequirePermission("attendance", "UPDATE")
@@ -69,9 +73,10 @@ export class AttendanceController {
     @Body() dto: UpdateAttendanceDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    return { data: await this.attendanceService.updateAttendance(id, dto, userId, { userId, role, portal }) };
+    return { data: await this.attendanceService.updateAttendance(id, dto, userId, { userId, role, portal, homeroomClassName }) };
   }
 
   @RequirePermission("attendance", "DELETE")
@@ -80,9 +85,10 @@ export class AttendanceController {
     @Param() { id }: ParamDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    await this.attendanceService.deleteAttendance(id, { userId, role, portal });
+    await this.attendanceService.deleteAttendance(id, { userId, role, portal, homeroomClassName });
     return { message: "Attendance record deleted successfully" };
   }
 }

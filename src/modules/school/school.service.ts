@@ -4,10 +4,14 @@ import { and, asc, count, desc, eq, gte, inArray, lte, sql, type SQL } from "dri
 import { expiredClassPhotoSql, isExpiredClassPhoto } from "modules/school/class-photo";
 import {
   assertExactPortalAccess,
+  assertHomeroomAccess,
+  assertHomeroomForCreate,
   assertPortalAccess,
   assertPortalForCreate,
   callerPortal,
   classNameToPortal,
+  homeroomFilterCondition,
+  type HomeroomCaller,
   type SchoolPortal
 } from "common/portal-scope";
 import { ParamDto } from "common/common.dto";
@@ -193,23 +197,30 @@ export class SchoolService {
     return this.delete(examsTable, id, "Exam");
   }
 
-  createReportCard(dto: CreateReportCardDto, createdBy?: string) {
+  createReportCard(dto: CreateReportCardDto, createdBy?: string, requestingUser?: HomeroomCaller) {
+    // Decision 7: a teacher may only write a report card for their own homeroom class.
+    assertHomeroomForCreate(requestingUser, dto.className);
     return this.insert(reportCardsTable, { ...dto, createdBy }, "report card");
   }
 
-  async getReportCards(requestingUser?: { userId: string; role: string }) {
+  async getReportCards(requestingUser?: { userId: string; role: string; homeroomClassName?: string | null }) {
     const rows = await this.databaseService.db.select().from(reportCardsTable);
-    return this.scopeRowsToParent(rows, requestingUser);
+    // Decision 7: a teacher sees only report cards for their own homeroom class.
+    return this.scopeRowsToHomeroom(await this.scopeRowsToParent(rows, requestingUser), requestingUser);
   }
 
-  async getReportCard(id: string, requestingUser?: { userId: string; role: string }) {
+  async getReportCard(id: string, requestingUser?: { userId: string; role: string; homeroomClassName?: string | null }) {
     const reportCard = await this.findOne(reportCardsTable, id, "Report card");
-    const [scoped] = await this.scopeRowsToParent([reportCard], requestingUser);
+    const [scoped] = this.scopeRowsToHomeroom(await this.scopeRowsToParent([reportCard], requestingUser), requestingUser);
     if (!scoped) throw new NotFoundException("Report card not found");
     return scoped;
   }
 
-  updateReportCard(id: string, dto: UpdateReportCardDto) {
+  async updateReportCard(id: string, dto: UpdateReportCardDto, requestingUser?: HomeroomCaller) {
+    const [existing] = await this.databaseService.db.select({ className: reportCardsTable.className }).from(reportCardsTable).where(eq(reportCardsTable.id, id)).limit(1);
+    if (!existing) throw new NotFoundException("Report card not found");
+    assertHomeroomAccess(requestingUser, existing.className, "Report card not found");
+    if (dto.className !== undefined) assertHomeroomForCreate(requestingUser, dto.className);
     // Approval is exclusively through publishReportCard() below (decision 7: "admin approves the
     // reports") -- status is dropped here so a teacher editing their own draft through the same
     // form/PATCH can never self-approve by just including it in the body.
@@ -931,7 +942,9 @@ export class SchoolService {
   // ---------------------------------------------------------------- weekly objectives
   /** Re-submitting the same week replaces the previous entry rather than stacking duplicates,
    *  which also keeps teachers on CREATE-only access. */
-  async createWeeklyObjective(dto: CreateWeeklyObjectiveDto, teacherId: string) {
+  async createWeeklyObjective(dto: CreateWeeklyObjectiveDto, teacherId: string, requestingUser?: HomeroomCaller) {
+    // Decision 7: a teacher may only post a weekly objective for their own homeroom class.
+    assertHomeroomForCreate(requestingUser, dto.className);
     const [existing] = await this.databaseService.db
       .select({ id: weeklyObjectivesTable.id })
       .from(weeklyObjectivesTable)
@@ -956,8 +969,10 @@ export class SchoolService {
     return this.insert(weeklyObjectivesTable, { ...dto, teacherId, status: "PENDING" }, "weekly objective");
   }
 
-  getWeeklyObjectives() {
-    return this.databaseService.db
+  getWeeklyObjectives(requestingUser?: HomeroomCaller) {
+    // Decision 7: a teacher sees only their own homeroom class's objectives, not every class's.
+    const homeroomCondition = homeroomFilterCondition(weeklyObjectivesTable.className, requestingUser);
+    const query = this.databaseService.db
       .select({
         id: weeklyObjectivesTable.id,
         teacherId: weeklyObjectivesTable.teacherId,
@@ -973,6 +988,7 @@ export class SchoolService {
       })
       .from(weeklyObjectivesTable)
       .leftJoin(usersTable, eq(weeklyObjectivesTable.teacherId, usersTable.id));
+    return homeroomCondition ? query.where(homeroomCondition) : query;
   }
 
   updateWeeklyObjective(id: string, dto: UpdateWeeklyObjectiveDto) {
@@ -1057,6 +1073,22 @@ export class SchoolService {
     if (this.normalizeRole(requestingUser?.role) !== "PARENT") return rows;
     const studentIds = new Set(await this.resolveParentStudentIds(requestingUser!.userId));
     return rows.filter((row) => studentIds.has(row[studentIdField] as string));
+  }
+
+  /**
+   * Decision 7: drops rows outside a teacher's own homeroom class. No-op for every other role.
+   * Only usable on tables that carry className directly (report cards, weekly objectives, ...) --
+   * no join needed, unlike the student-keyed tables scopeRowsToPortal handles.
+   */
+  private scopeRowsToHomeroom<T extends Record<string, unknown>>(
+    rows: T[],
+    requestingUser: HomeroomCaller,
+    classNameField: keyof T = "className" as keyof T
+  ): T[] {
+    if (this.normalizeRole(requestingUser?.role) !== "TEACHER") return rows;
+    const homeroom = requestingUser?.homeroomClassName;
+    if (!homeroom) return [];
+    return rows.filter((row) => row[classNameField] === homeroom);
   }
 
   /**
