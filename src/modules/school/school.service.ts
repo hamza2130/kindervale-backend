@@ -277,12 +277,19 @@ export class SchoolService {
     return this.insert(timetablesTable, dto, "timetable");
   }
 
-  getTimetables() {
-    return this.databaseService.db.select().from(timetablesTable);
+  // Gated on "calendar" READ (not a "timetables" module -- there isn't one), which TEACHER
+  // already has. Unscoped until now: a teacher could see every class's timetable, not just their
+  // own (decision 7).
+  getTimetables(requestingUser?: HomeroomCaller) {
+    const homeroomCondition = homeroomFilterCondition(timetablesTable.className, requestingUser);
+    const query = this.databaseService.db.select().from(timetablesTable);
+    return homeroomCondition ? query.where(homeroomCondition) : query;
   }
 
-  getTimetable(id: string) {
-    return this.findOne(timetablesTable, id, "Timetable");
+  async getTimetable(id: string, requestingUser?: HomeroomCaller) {
+    const timetable = await this.findOne(timetablesTable, id, "Timetable");
+    assertHomeroomAccess(requestingUser, timetable.className, "Timetable not found");
+    return timetable;
   }
 
   updateTimetable(id: string, dto: UpdateTimetableDto) {

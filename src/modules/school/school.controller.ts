@@ -222,14 +222,14 @@ export class SchoolController {
 
   @RequirePermission("calendar", "READ")
   @Get("timetables")
-  async getTimetables() {
-    return { data: await this.schoolService.getTimetables() };
+  async getTimetables(@User("role") role: string, @User("homeroomClassName") homeroomClassName?: string | null) {
+    return { data: await this.schoolService.getTimetables({ role, homeroomClassName }) };
   }
 
   @RequirePermission("calendar", "READ")
   @Get("timetables/:id")
-  async getTimetable(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getTimetable(id) };
+  async getTimetable(@Param() { id }: ParamDto, @User("role") role: string, @User("homeroomClassName") homeroomClassName?: string | null) {
+    return { data: await this.schoolService.getTimetable(id, { role, homeroomClassName }) };
   }
 
   @RequirePermission("calendar", "UPDATE")
