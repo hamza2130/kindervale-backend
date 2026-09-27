@@ -1,10 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { ParamDto } from "common/common.dto";
 import { AuthGuard } from "middleware/auth.guard";
+import { User } from "middleware/user.decorator";
 import { RequirePermission } from "middleware/permission.decorator";
 import { PermissionGuard } from "middleware/permission.guard";
 import { CreateUserDto, GenerateLoginDto, UpdateUserDto, UserListQueryDto } from "modules/user/user.dto";
 import { UserService } from "modules/user/user.service";
+
+const isDaycareAdmin = (role?: string) => (role ?? "").replace(/[\s_-]+/g, "").toUpperCase() === "DAYCAREADMIN";
 
 @UseGuards(AuthGuard, PermissionGuard)
 @Controller("users")
@@ -13,14 +16,21 @@ export class UserController {
 
   @RequirePermission("users", "CREATE")
   @Post()
-  async createUser(@Body() dto: CreateUserDto) {
+  async createUser(@Body() dto: CreateUserDto, @User("role") callerRole: string) {
+    // Daycare has no teacher/staff logins -- its Admin may only create parent accounts.
+    if (isDaycareAdmin(callerRole) && String(dto.role).toUpperCase() !== "PARENT") {
+      throw new ForbiddenException("Daycare Admin can only create parent logins");
+    }
     const user = await this.userService.createUser(dto);
     return { data: user };
   }
 
   @RequirePermission("users", "CREATE")
   @Post("generate-login")
-  async generateLogin(@Body() dto: GenerateLoginDto) {
+  async generateLogin(@Body() dto: GenerateLoginDto, @User("role") callerRole: string) {
+    if (isDaycareAdmin(callerRole) && dto.role !== "Parent") {
+      throw new ForbiddenException("Daycare Admin can only create parent logins");
+    }
     const result = await this.userService.generateLogin(dto);
     return { data: result };
   }

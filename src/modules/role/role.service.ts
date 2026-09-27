@@ -122,12 +122,12 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     // needs UPDATE, which is what approves an objective.
     "weekly-objectives": ["CREATE", "READ"],
     "homework-submissions": ["READ"],
-    "daycare-reports": ["CREATE", "READ", "UPDATE"],
+    // No daycare-reports / daycare-resources: Daycare has no teacher logins, and Daily Activity
+    // is entered by the Daycare Admin only.
     notices: ["READ"],
     calendar: ["READ"],
     documents: ["CREATE", "READ"],
-    exams: ["READ"],
-    "daycare-resources": ["READ"]
+    exams: ["READ"]
   },
   PARENT: {
     dashboard: ["READ"],
@@ -341,7 +341,7 @@ export class RoleService implements OnApplicationBootstrap {
     // grants would still be found and allowed. These two are wiped and rebuilt from
     // defaultRoleAccess exactly on every boot instead. Every other role keeps the additive
     // behavior, so any manual tweaks made via assignPermissions() survive restarts.
-    const reconciledRoles: UserRole[] = ["ADMIN", "DAYCAREADMIN"];
+    const reconciledRoles: UserRole[] = ["ADMIN", "DAYCAREADMIN", "TEACHER"];
     for (const role of roles) {
       if (!reconciledRoles.includes(role.name)) continue;
       const roleAccess = defaultRoleAccess[role.name];
