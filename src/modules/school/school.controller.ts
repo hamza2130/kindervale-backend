@@ -267,8 +267,8 @@ export class SchoolController {
 
   @RequirePermission("documents", "DELETE")
   @Delete("documents/:id")
-  async deleteDocument(@Param() { id }: ParamDto) {
-    await this.schoolService.deleteDocument(id);
+  async deleteDocument(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    await this.schoolService.deleteDocument(id, { userId, role });
     return { message: "Document deleted successfully" };
   }
 

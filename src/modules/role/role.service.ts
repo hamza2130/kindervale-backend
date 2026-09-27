@@ -88,7 +88,12 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     // Generate Login, narrowed to parent logins only on the frontend -- teacher accounts are
     // created directly through Admin's staff form now, not a separate generate-login step.
     users: ["CREATE", "READ"],
-    parents: ["CREATE", "READ"]
+    parents: ["CREATE", "READ"],
+    // Daycare class photos: upload + early-delete. school.service.ts additionally confines both
+    // to the Daycare portal and, for delete, to a document Daycare Admin actually uploaded when
+    // it isn't a class photo -- the module grant alone would otherwise let them touch any
+    // document in the system, Kindervale included.
+    documents: ["CREATE", "READ", "DELETE"]
   },
   ACCOUNTANT: {
     dashboard: ["READ"],
