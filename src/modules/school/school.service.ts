@@ -358,6 +358,22 @@ export class SchoolService {
   }
 
   async createLeaveRequest(dto: CreateLeaveRequestDto, role?: string, authenticatedUserId?: string) {
+    // Daycare has no leave-request flow at all -- absence is marked directly by the Daycare Admin
+    // within Daily Activity/attendance, never requested by a parent or filed on a child's behalf.
+    // This is an absolute block (unlike the portal-scoped checks elsewhere in this file), so it
+    // also stops an Admin/Principal from filing one for a daycare child "on behalf" of someone.
+    if (dto.studentId) {
+      const [student] = await this.databaseService.db
+        .select({ className: studentsTable.className })
+        .from(studentsTable)
+        .where(eq(studentsTable.id, dto.studentId))
+        .limit(1);
+      if (!student) throw new NotFoundException("Student not found");
+      if (classNameToPortal(student.className) === "Daycare") {
+        throw new BadRequestException("Daycare children do not have a leave-request flow; absence is marked directly in Daily Activity.");
+      }
+    }
+
     const normalizedRole = role?.toUpperCase();
     const isAdminCreated =
       normalizedRole === "ADMIN" || normalizedRole === "DAYCAREADMIN" || normalizedRole === "PRINCIPAL";

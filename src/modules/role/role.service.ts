@@ -78,6 +78,11 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     // View-only: staff are added/edited by Admin now, but Daycare Admin still needs to see who
     // exists to pick a name when marking staff attendance.
     teachers: ["READ"],
+    // A daycare child's absence is marked here directly (within Daily Activity), not requested --
+    // AttendanceService's own portal scoping (callerPortal) already confines every read/write a
+    // Daycare Admin makes to daycare-portal students only, the same as it does for Admin/Teacher.
+    // No DELETE: bulkMarkAttendance already upserts, so correcting a mistake never needs one.
+    attendance: ["CREATE", "READ", "UPDATE"],
     "daycare-reports": ["MANAGE"],
     "staff-attendance": ["MANAGE"],
     // Generate Login, narrowed to parent logins only on the frontend -- teacher accounts are
