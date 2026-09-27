@@ -291,11 +291,17 @@ export class SchoolService {
     if (!existing) throw new NotFoundException("Report card not found");
     assertHomeroomAccess(requestingUser, existing.className, "Report card not found");
     if (dto.className !== undefined) assertHomeroomForCreate(requestingUser, dto.className);
-    // Approval is exclusively through publishReportCard() below (decision 7: "admin approves the
-    // reports") -- status is dropped here so a teacher editing their own draft through the same
-    // form/PATCH can never self-approve by just including it in the body.
-    const { status, ...rest } = dto;
-    return this.update(reportCardsTable, id, rest, "Report card");
+    // A teacher legitimately moves their own draft DRAFT -> PENDING ("submit for review") through
+    // this same PATCH, so status can't be blocked wholesale -- only APPROVED is rejected here,
+    // since that's exclusively through publishReportCard() below (decision 7: "admin approves the
+    // reports"). Rejected loudly (like voidFee's equivalent guard) rather than silently dropped:
+    // a silent drop here previously made the frontend's Approve button (which still only ever
+    // called this same PATCH with status: "APPROVED") show a false "Report approved" success
+    // toast while nothing was actually persisted -- see the frontend fix that pairs with this.
+    if (dto.status === "APPROVED") {
+      throw new BadRequestException("Use POST /report-cards/:id/publish to approve a report card");
+    }
+    return this.update(reportCardsTable, id, dto, "Report card");
   }
 
   publishReportCard(id: string) {
