@@ -1,6 +1,22 @@
 import { PartialType } from "@nestjs/mapped-types";
 import { Type } from "class-transformer";
-import { IsDateString, IsEnum, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Matches, Min } from "class-validator";
+import {
+  ArrayMinSize,
+  IsArray,
+  IsDateString,
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested
+} from "class-validator";
 import { Trim } from "common/transformer";
 import {
   documentTypeEnum,
@@ -14,6 +30,11 @@ import {
   type NotificationAudience,
   type ReviewStatus
 } from "models/school";
+import { teacherAttendanceEnum, type TeacherAttendance } from "models/teachers";
+
+// HH:mm, 24-hour clock (matches the "24 hour clock" convention already used elsewhere, e.g. the
+// class-photo expiry window).
+const TIME_HH_MM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 export class CreateFeeDto {
   @IsString()
@@ -29,10 +50,13 @@ export class CreateFeeDto {
   @Min(0)
   amount: number;
 
+  // A percentage, not an amount -- 0..100. Was @Min(0) only (C-20/ACC-08), so a 150% "scholarship"
+  // was accepted and silently produced a negative net fee.
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
+  @Max(100)
   scholarship?: number;
 
   @IsDateString()
@@ -63,6 +87,65 @@ export class CreateFeeStructureDto {
 }
 
 export class UpdateFeeStructureDto extends PartialType(CreateFeeStructureDto) {}
+
+// C-20: this route took @Body() dto: any -- a bad status or a garbage time string reached the
+// database directly and came back as a raw 500. Cross-field checks (arrival before departure,
+// times only present for PRESENT/LATE) stay in the service, since class-validator can't easily
+// express "these two fields relative to a third" without a custom decorator.
+export class StaffAttendanceRecordDto {
+  @IsString()
+  @Trim()
+  teacherId: string;
+
+  @IsEnum(teacherAttendanceEnum.enumValues, {
+    message: `Status must be one of: ${teacherAttendanceEnum.enumValues.join(", ")}`
+  })
+  status: TeacherAttendance;
+
+  @IsOptional()
+  @Matches(TIME_HH_MM, { message: "Arrival time must be in HH:mm (24-hour) format" })
+  arrivalTime?: string;
+
+  @IsOptional()
+  @Matches(TIME_HH_MM, { message: "Departure time must be in HH:mm (24-hour) format" })
+  departureTime?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(500)
+  remarks?: string;
+}
+
+export class StaffAttendanceQueryDto {
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  teacherId?: string;
+
+  @IsOptional()
+  @IsDateString()
+  fromDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  toDate?: string;
+}
+
+export class BulkMarkStaffAttendanceDto {
+  @IsDateString()
+  date: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => StaffAttendanceRecordDto)
+  records: StaffAttendanceRecordDto[];
+}
 
 export class FinancialReportQueryDto {
   @IsOptional()

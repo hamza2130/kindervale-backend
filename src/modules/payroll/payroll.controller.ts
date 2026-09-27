@@ -2,6 +2,7 @@ import { Body, Controller, Post, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "middleware/auth.guard";
 import { RequirePermission } from "middleware/permission.decorator";
 import { PermissionGuard } from "middleware/permission.guard";
+import { RunPayrollDto } from "modules/payroll/payroll.dto";
 import { PayrollService } from "modules/payroll/payroll.service";
 
 @UseGuards(AuthGuard, PermissionGuard)
@@ -17,7 +18,7 @@ export class PayrollController {
    */
   @RequirePermission("settings", "MANAGE")
   @Post("run")
-  async runPayroll(@Body() dto: { period?: string }) {
+  async runPayroll(@Body() dto: RunPayrollDto) {
     const period = dto.period ?? new Date().toISOString().slice(0, 7);
     const result = await this.payrollService.generatePayrollExpenses(period);
     return { data: { period, ...result } };
