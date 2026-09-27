@@ -176,7 +176,7 @@ export class AuthService {
 
   async refresh(dto: RefreshTokenDto) {
     const refreshToken = this.getRefreshToken(dto);
-    const payload = this.jwtService.verifyToken(refreshToken).data as {
+    const payload = this.jwtService.verifyTypedToken(refreshToken, "refresh").data as {
       userId: string;
       name: string;
       email: string;
@@ -236,7 +236,7 @@ export class AuthService {
   async logout(dto: LogoutDto) {
     const refreshToken = this.getOptionalRefreshToken(dto);
     if (refreshToken) {
-      const payload = this.jwtService.verifyToken(refreshToken).data as { userId?: string };
+      const payload = this.jwtService.verifyTypedToken(refreshToken, "refresh").data as { userId?: string };
       if (payload?.userId) {
         const refreshRecord = await this.findValidRefreshToken(payload.userId, refreshToken);
         if (refreshRecord) {
@@ -292,23 +292,20 @@ export class AuthService {
       throw new UnauthorizedException("Invalid or expired reset OTP");
     }
 
-    const isDemoResetOtp = dto.otp === "0000";
-    const resetTokens = isDemoResetOtp
-      ? []
-      : await this.databaseService.db
-          .select()
-          .from(passwordResetTokensTable)
-          .where(
-            and(
-              eq(passwordResetTokensTable.userId, user.id),
-              isNull(passwordResetTokensTable.usedAt),
-              gt(passwordResetTokensTable.expiresAt, new Date())
-            )
-          )
-          .orderBy(desc(passwordResetTokensTable.createdAt));
+    const resetTokens = await this.databaseService.db
+      .select()
+      .from(passwordResetTokensTable)
+      .where(
+        and(
+          eq(passwordResetTokensTable.userId, user.id),
+          isNull(passwordResetTokensTable.usedAt),
+          gt(passwordResetTokensTable.expiresAt, new Date())
+        )
+      )
+      .orderBy(desc(passwordResetTokensTable.createdAt));
 
-    const token = isDemoResetOtp ? null : await this.findMatchingResetToken(resetTokens, dto.otp);
-    if (!isDemoResetOtp && !token) {
+    const token = await this.findMatchingResetToken(resetTokens, dto.otp);
+    if (!token) {
       throw new UnauthorizedException("Invalid or expired reset OTP");
     }
 
@@ -396,7 +393,7 @@ export class AuthService {
   private async persistRefreshToken(userId: string, refreshToken: string) {
     await this.databaseService.db.insert(refreshTokensTable).values({
       userId,
-      tokenHash: await this.hashService.hash(refreshToken),
+      tokenHash: this.hashService.sha256Hex(refreshToken),
       expiresAt: new Date(Date.now() + this.jwtService.refreshTokenMaxAge)
     });
   }
@@ -421,25 +418,21 @@ export class AuthService {
   }
 
   private async findValidRefreshToken(userId: string, refreshToken: string) {
-    const records = await this.databaseService.db
+    const [record] = await this.databaseService.db
       .select()
       .from(refreshTokensTable)
       .where(
         and(
           eq(refreshTokensTable.userId, userId),
+          eq(refreshTokensTable.tokenHash, this.hashService.sha256Hex(refreshToken)),
           isNull(refreshTokensTable.revokedAt),
           gt(refreshTokensTable.expiresAt, new Date())
         )
       )
-      .orderBy(desc(refreshTokensTable.createdAt));
+      .orderBy(desc(refreshTokensTable.createdAt))
+      .limit(1);
 
-    for (const record of records) {
-      if (await this.hashService.compare(refreshToken, record.tokenHash)) {
-        return record;
-      }
-    }
-
-    return null;
+    return record ?? null;
   }
 
   private async findMatchingResetToken(tokens: (typeof passwordResetTokensTable.$inferSelect)[], otp: string) {

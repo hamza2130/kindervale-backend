@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, getTableColumns, ilike, inArray, ne, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, ilike, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
 import usersTable, { type SafeUser, type UserRole } from "models/users";
+import { refreshTokensTable } from "models/auth";
 import { parentsTable, studentsTable } from "models/school";
 import teachersTable from "models/teachers";
 import { DatabaseService } from "modules/database/database.service";
@@ -14,7 +15,13 @@ export class UserService {
     private readonly hashService: HashService
   ) {}
 
-  async createUser(dto: CreateUserDto): Promise<SafeUser> {
+  /**
+   * Any password on the incoming DTO is ignored -- this always mints a fresh random one
+   * server-side and hands it back once, the same contract as generateLogin(). The caller
+   * (Admin creating a Teacher/Accountant account) is responsible for showing it to the admin
+   * exactly once; it is never stored in plaintext or recoverable afterwards.
+   */
+  async createUser(dto: CreateUserDto): Promise<SafeUser & { password: string }> {
     const { password: _, ...safeColumns } = getTableColumns(usersTable);
 
     const [existingUser] = await this.databaseService.db
@@ -30,11 +37,16 @@ export class UserService {
       throw new ConflictException("Username already exists");
     }
 
+    const password = this.hashService.generateRandomPassword();
     const [user] = await this.databaseService.db
       .insert(usersTable)
       .values({
-        ...dto,
-        password: await this.hashService.hash(dto.password)
+        name: dto.name,
+        username: dto.username,
+        email: dto.email,
+        role: dto.role,
+        password: await this.hashService.hash(password),
+        mustChangePassword: true
       })
       .returning(safeColumns);
 
@@ -42,7 +54,7 @@ export class UserService {
       throw new ConflictException("Failed to create user");
     }
 
-    return user as SafeUser;
+    return { ...(user as SafeUser), password };
   }
 
   async getUsers(query: UserListQueryDto) {
@@ -133,22 +145,50 @@ export class UserService {
     return user as SafeUser;
   }
 
+  /**
+   * "Revoke" archives the account rather than deleting it: status -> ARCHIVED (login refused,
+   * same check as INACTIVE), every refresh token invalidated, but the row and everything that
+   * references it (teacher profile + salary/attendance history, parent record + their children's
+   * records, ...) stays untouched. A hard `DELETE FROM users` here used to cascade into
+   * teachersTable via its FK, destroying a departed teacher's salary/attendance history along
+   * with their login -- this is what "keep their data, revoke their login" (the same rule
+   * TeacherService.deleteTeacher applies) means for the generic user-management screen too.
+   */
   async deleteUser(userId: string): Promise<void> {
-    const [deletedUser] = await this.databaseService.db
-      .delete(usersTable)
+    const now = new Date();
+    const [archivedUser] = await this.databaseService.db
+      .update(usersTable)
+      .set({ status: "ARCHIVED", updatedAt: now })
       .where(eq(usersTable.id, userId))
       .returning({ id: usersTable.id });
 
-    if (!deletedUser) {
+    if (!archivedUser) {
       throw new NotFoundException("User not found");
     }
+
+    await this.databaseService.db
+      .update(refreshTokensTable)
+      .set({ revokedAt: now })
+      .where(and(eq(refreshTokensTable.userId, userId), isNull(refreshTokensTable.revokedAt)));
+
+    // Keep the teacher-specific archive marker consistent, so this user still shows correctly
+    // under the Staff list's "Archived" filter even when revoked from the generic Users screen
+    // rather than through Teacher's own delete route.
+    await this.databaseService.db
+      .update(teachersTable)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(and(eq(teachersTable.userId, userId), isNull(teachersTable.archivedAt)));
   }
 
   private buildUserWhere(query: UserListQueryDto): SQL | undefined {
     const conditions: SQL[] = [];
 
     if (query.role) conditions.push(eq(usersTable.role, query.role));
+    // Archived accounts are excluded from the default list -- they live behind the explicit
+    // "Archived" filter (?status=ARCHIVED) so a revoked login doesn't clutter the regular Staff/
+    // Users list. Filtering by any other status (or ARCHIVED itself) still works as an explicit ask.
     if (query.status) conditions.push(eq(usersTable.status, query.status));
+    else conditions.push(ne(usersTable.status, "ARCHIVED"));
     if (query.search) {
       const searchCondition = or(
         ilike(usersTable.name, `%${query.search}%`),
@@ -206,12 +246,13 @@ export class UserService {
           if (dto.role === "Parent" && dto.studentIds?.length) {
             await this.linkStudentsToParent(dto.studentIds, dto.linkedRecordId);
           }
-          // Reset password on the existing account.
-          const firstName = dto.name.trim().split(/\s+/)[0] || "User";
-          const password = `${firstName.charAt(0).toUpperCase()}${firstName.slice(1)}@2026`;
+          // Reset password on the existing account. A fresh random password every time --
+          // regenerating used to recompute the same `${FirstName}@2026` string from the
+          // client-supplied name, so "regenerate" never actually rotated anything.
+          const password = this.hashService.generateRandomPassword();
           await this.databaseService.db
             .update(usersTable)
-            .set({ password: await this.hashService.hash(password), updatedAt: new Date() })
+            .set({ password: await this.hashService.hash(password), mustChangePassword: true, updatedAt: new Date() })
             .where(eq(usersTable.id, existingUserId));
           return {
             user: existingUser,
@@ -237,8 +278,7 @@ export class UserService {
     const suffix = Math.floor(10 + Math.random() * 90);
     const username = `${base || "user"}${suffix}`;
     const email = dto.email?.trim() || `${username}@kindervale.local`;
-    const firstName = dto.name.trim().split(/\s+/)[0] || "User";
-    const password = `${firstName.charAt(0).toUpperCase()}${firstName.slice(1)}@2026`;
+    const password = this.hashService.generateRandomPassword();
 
     // Guard against collisions before we start inserting.
     const [clash] = await this.databaseService.db
@@ -257,6 +297,7 @@ export class UserService {
         username,
         email,
         password: await this.hashService.hash(password),
+        mustChangePassword: true,
         role: roleUpper,
       })
       .returning(safeColumns);

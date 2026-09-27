@@ -5,6 +5,7 @@ import { expiredClassPhotoSql, isExpiredClassPhoto } from "modules/school/class-
 import {
   assertExactPortalAccess,
   assertPortalAccess,
+  assertPortalForCreate,
   callerPortal,
   classNameToPortal,
   type SchoolPortal
@@ -270,6 +271,14 @@ export class SchoolService {
         throw new ForbiddenException("You can only upload photos for your own homeroom class");
       }
     }
+    // Daycare has no teacher logins -- its class photos are uploaded by the Daycare Admin
+    // directly. The permission grant alone doesn't stop them tagging a photo as a Kindervale
+    // class, so that's enforced here the same way create/update already is for students/teachers.
+    // Scoped to Daycare Admin specifically (not Admin, who may manage class photos for either
+    // portal) via assertPortalForCreate's own role check.
+    if (dto.kind === "classPhoto" && dto.cls && (uploaderRole ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "") === "DAYCAREADMIN") {
+      assertPortalForCreate(uploaderRole, dto.cls);
+    }
 
     const originalName = basename(String(file.originalname));
     const mimeType = file.mimetype || "application/octet-stream";
@@ -318,6 +327,29 @@ export class SchoolService {
     return this.findOne(documentsTable, id, "Document");
   }
 
+  /**
+   * Decision 8: whoever runs a portal may delete its own class photos early (before the 24h
+   * auto-expiry). Daycare Admin just gained the "documents" permission module for exactly this --
+   * without a resource-level check that grant would also let them delete any Kindervale document
+   * (book lists, teacher PDFs, ...), since the documents table carries no portal column of its
+   * own. Admin/Principal are unrestricted here, same as every other document-management path.
+   */
+  async deleteDocument(id: string, requestingUser?: { userId: string; role: string }): Promise<void> {
+    const normalizedRole = (requestingUser?.role ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "");
+    if (normalizedRole === "DAYCAREADMIN") {
+      const document = await this.getDocument(id);
+      const meta = this.parseDocumentMetadata(document.description);
+      if (meta.kind === "classPhoto" && meta.cls) {
+        assertPortalAccess(requestingUser?.role, meta.cls, "Document not found");
+      } else if (document.uploadedBy !== requestingUser?.userId) {
+        // Not a class photo they can portal-check, and not their own upload -- default to denying
+        // rather than assuming it's safe for them to touch.
+        throw new NotFoundException("Document not found");
+      }
+    }
+    await this.delete(documentsTable, id, "Document");
+  }
+
   async streamDocument(id: string, response: Response) {
     const document = await this.getDocument(id);
     if (isExpiredClassPhoto(document)) throw new NotFoundException("This photo has expired");
@@ -344,10 +376,6 @@ export class SchoolService {
     return this.update(documentsTable, id, dto, "Document");
   }
 
-  deleteDocument(id: string) {
-    return this.delete(documentsTable, id, "Document");
-  }
-
   private parseDocumentMetadata(description?: string | null): Record<string, any> {
     if (!description) return {};
     try {
@@ -358,6 +386,22 @@ export class SchoolService {
   }
 
   async createLeaveRequest(dto: CreateLeaveRequestDto, role?: string, authenticatedUserId?: string) {
+    // Daycare has no leave-request flow at all -- absence is marked directly by the Daycare Admin
+    // within Daily Activity/attendance, never requested by a parent or filed on a child's behalf.
+    // This is an absolute block (unlike the portal-scoped checks elsewhere in this file), so it
+    // also stops an Admin/Principal from filing one for a daycare child "on behalf" of someone.
+    if (dto.studentId) {
+      const [student] = await this.databaseService.db
+        .select({ className: studentsTable.className })
+        .from(studentsTable)
+        .where(eq(studentsTable.id, dto.studentId))
+        .limit(1);
+      if (!student) throw new NotFoundException("Student not found");
+      if (classNameToPortal(student.className) === "Daycare") {
+        throw new BadRequestException("Daycare children do not have a leave-request flow; absence is marked directly in Daily Activity.");
+      }
+    }
+
     const normalizedRole = role?.toUpperCase();
     const isAdminCreated =
       normalizedRole === "ADMIN" || normalizedRole === "DAYCAREADMIN" || normalizedRole === "PRINCIPAL";

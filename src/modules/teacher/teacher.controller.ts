@@ -4,7 +4,13 @@ import { AuthGuard } from "middleware/auth.guard";
 import { RequirePermission, SkipPermission } from "middleware/permission.decorator";
 import { PermissionGuard } from "middleware/permission.guard";
 import { User } from "middleware/user.decorator";
-import { CreateTeacherDto, TeacherListQueryDto, UpdateTeacherDto } from "modules/teacher/teacher.dto";
+import {
+  CreateTeacherDto,
+  SelfUpdateTeacherDto,
+  TeacherListQueryDto,
+  UpdateTeacherDto,
+  UpdateTeacherSalaryDto
+} from "modules/teacher/teacher.dto";
 import { TeacherService } from "modules/teacher/teacher.service";
 
 @UseGuards(AuthGuard, PermissionGuard)
@@ -35,7 +41,7 @@ export class TeacherController {
 
   @SkipPermission()
   @Patch("me")
-  async updateMyTeacherProfile(@User("userId") userId: string, @Body() dto: UpdateTeacherDto) {
+  async updateMyTeacherProfile(@User("userId") userId: string, @Body() dto: SelfUpdateTeacherDto) {
     const teacher = await this.teacherService.updateTeacherByUserId(userId, dto);
     return { data: teacher };
   }
@@ -64,5 +70,15 @@ export class TeacherController {
   async deleteTeacher(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
     await this.teacherService.deleteTeacher(id, { userId, role });
     return { message: "Teacher deleted successfully" };
+  }
+
+  // Separate permission module ("teacher-salary") from the general "teachers" module: after
+  // creation, only the Accountant may change a salary; Admin/Principal keep read-only visibility
+  // through the regular teacher list/detail, which already includes the salary field.
+  @RequirePermission("teacher-salary", "UPDATE")
+  @Patch(":id/salary")
+  async updateTeacherSalary(@Param() { id }: ParamDto, @Body() dto: UpdateTeacherSalaryDto) {
+    const teacher = await this.teacherService.updateSalary(id, dto.salary);
+    return { data: teacher };
   }
 }

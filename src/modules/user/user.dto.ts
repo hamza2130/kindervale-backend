@@ -6,7 +6,7 @@ import { userRoleEnum, userStatusEnum, type UserRole, type UserStatus } from "mo
 
 export class CreateUserDto {
   @IsString({ message: "Name must be a string" })
-  @Matches(/^[a-zA-Z\s]+$/, { message: "Name can only contain letters and spaces" })
+  @Matches(/^[\p{L}][\p{L}\s'-]*$/u, { message: "Name can only contain letters, spaces, apostrophes and hyphens" })
   @Trim()
   name: string;
 
@@ -19,9 +19,13 @@ export class CreateUserDto {
   @Trim()
   email: string;
 
+  // The service always generates the real password server-side (see UserService.createUser)
+  // and returns it once -- this field is accepted-but-ignored so older callers don't fail
+  // validation while they're updated to stop sending one.
+  @IsOptional()
   @IsString({ message: "Password must be a string" })
   @MinLength(6, { message: "Password must be at least 6 characters" })
-  password: string;
+  password?: string;
 
   @Transform(({ value }) => normalizeUserRole(value))
   @IsEnum(userRoleEnum.enumValues, {
@@ -33,7 +37,7 @@ export class CreateUserDto {
 export class UpdateUserDto {
   @IsOptional()
   @IsString({ message: "Name must be a string" })
-  @Matches(/^[a-zA-Z\s]+$/, { message: "Name can only contain letters and spaces" })
+  @Matches(/^[\p{L}][\p{L}\s'-]*$/u, { message: "Name can only contain letters, spaces, apostrophes and hyphens" })
   @Trim()
   name?: string;
 
