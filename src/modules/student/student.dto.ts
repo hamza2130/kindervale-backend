@@ -1,5 +1,5 @@
-import { Type } from "class-transformer";
-import { IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { Transform, Type } from "class-transformer";
+import { IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
 import { Trim } from "common/transformer";
 import { feeStatusEnum, type FeeStatus } from "models/school";
 
@@ -169,4 +169,12 @@ export class StudentListQueryDto {
   @IsOptional()
   @IsIn(["asc", "desc"], { message: "Sort order must be asc or desc" })
   sortOrder?: "asc" | "desc" = "desc";
+
+  // A withdrawn/left student is archived (their attendance/fees/report-card history stays,
+  // any login they had is revoked) rather than deleted. Excluded from the default list; pass
+  // this to see them under the "Archived" filter.
+  @IsOptional()
+  @Transform(({ value }) => (value === "true" || value === true ? true : value === "false" || value === false ? false : value))
+  @IsBoolean({ message: "includeArchived must be a boolean" })
+  includeArchived?: boolean;
 }

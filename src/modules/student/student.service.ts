@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { createId } from "@paralleldrive/cuid2";
-import { and, asc, count, desc, eq, ilike, inArray, ne, notInArray, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, notInArray, or, type SQL } from "drizzle-orm";
 import {
   assertPortalAccess,
   assertPortalForCreate,
@@ -9,6 +9,7 @@ import {
   type PortalCaller,
   type SchoolPortal
 } from "common/portal-scope";
+import { refreshTokensTable } from "models/auth";
 import { parentsTable, studentsTable, type Student } from "models/school";
 import usersTable from "models/users";
 import { DatabaseService } from "modules/database/database.service";
@@ -152,21 +153,34 @@ export class StudentService {
     return student;
   }
 
+  /**
+   * A withdrawn/left student is archived, not deleted: the row and every table that references
+   * studentId (attendance, fees, homework, report cards, ...) stay untouched -- only archivedAt
+   * is set. Most students have no userId at all (one login per family, held by the parent), but
+   * when one does, that login is revoked the same way a departed teacher's is.
+   */
   async deleteStudent(id: string, requestingUser?: { userId: string; role: string }): Promise<void> {
     const [existing] = await this.databaseService.db
-      .select({ className: studentsTable.className })
+      .select({ className: studentsTable.className, userId: studentsTable.userId })
       .from(studentsTable)
       .where(eq(studentsTable.id, id))
       .limit(1);
     if (!existing) throw new NotFoundException("Student not found");
     assertPortalAccess(requestingUser?.role, existing.className, "Student not found");
 
-    const [student] = await this.databaseService.db
-      .delete(studentsTable)
-      .where(eq(studentsTable.id, id))
-      .returning({ id: studentsTable.id });
+    const now = new Date();
+    await this.databaseService.db
+      .update(studentsTable)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(eq(studentsTable.id, id));
 
-    if (!student) throw new NotFoundException("Student not found");
+    if (existing.userId) {
+      await this.databaseService.db.update(usersTable).set({ status: "ARCHIVED", updatedAt: now }).where(eq(usersTable.id, existing.userId));
+      await this.databaseService.db
+        .update(refreshTokensTable)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokensTable.userId, existing.userId), isNull(refreshTokensTable.revokedAt)));
+    }
   }
 
   private async validateRelations(userId?: string, parentId?: string) {
@@ -206,6 +220,7 @@ export class StudentService {
     if (query.className) conditions.push(eq(studentsTable.className, query.className));
     if (query.parentId) conditions.push(eq(studentsTable.parentId, query.parentId));
     if (query.feeStatus) conditions.push(eq(studentsTable.feeStatus, query.feeStatus));
+    if (!query.includeArchived) conditions.push(isNull(studentsTable.archivedAt));
     if (query.search) {
       const searchCondition = or(
         ilike(studentsTable.name, `%${query.search}%`),

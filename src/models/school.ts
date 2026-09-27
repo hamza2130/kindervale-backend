@@ -58,6 +58,10 @@ export const studentsTable = pgTable("students", {
   attendance: integer().default(0).notNull(),
   phone: text(),
   feeStatus: feeStatusEnum().default("PENDING").notNull(),
+  // Set when a withdrawn/left student is archived (see StudentService.deleteStudent): their row
+  // and every table that references studentId (attendance, fees, homework, report cards, ...)
+  // stay untouched -- only this timestamp is set, and their login (if they had one) is revoked.
+  archivedAt: timestamp(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });

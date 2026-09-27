@@ -215,6 +215,12 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "archived_at" timestamp
       `);
 
+      // Same soft-delete marker, on students (see StudentService.deleteStudent).
+      await this.db.execute(sql`
+        ALTER TABLE "students"
+          ADD COLUMN IF NOT EXISTS "archived_at" timestamp
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);
