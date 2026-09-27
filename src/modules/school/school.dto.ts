@@ -44,6 +44,13 @@ export class CreateFeeDto {
 
 export class UpdateFeeDto extends PartialType(CreateFeeDto) {}
 
+export class VoidFeeDto {
+  @IsOptional()
+  @IsString()
+  @Trim()
+  reason?: string;
+}
+
 export class FinancialReportQueryDto {
   @IsOptional()
   @IsIn(["Kindervale", "Daycare"], { message: "Portal must be Kindervale or Daycare" })

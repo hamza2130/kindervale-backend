@@ -43,7 +43,8 @@ import {
   UpdateReportCardDto,
   UpdateSchoolPolicyDto,
   UpdateTimetableDto,
-  UpsertSettingsDto
+  UpsertSettingsDto,
+  VoidFeeDto
 } from "modules/school/school.dto";
 import { SchoolService } from "modules/school/school.service";
 
@@ -85,6 +86,15 @@ export class SchoolController {
     @User("role") role: string
   ) {
     return { data: await this.schoolService.updateFee(id, dto, { userId, role }) };
+  }
+
+  // Same permission as updateFee -- fees:DELETE isn't granted to anyone today, so voiding
+  // (decision 4's void/credit-note capability) is the actual way a wrongly-issued invoice gets
+  // corrected in practice.
+  @RequirePermission("fees", "UPDATE")
+  @Post("fees/:id/void")
+  async voidFee(@Param() { id }: ParamDto, @Body() dto: VoidFeeDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.voidFee(id, dto, { userId, role }) };
   }
 
   @RequirePermission("fees", "DELETE")
