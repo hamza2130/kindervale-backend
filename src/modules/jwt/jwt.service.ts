@@ -43,13 +43,13 @@ export class JWTService {
   }
 
   generateAccessToken(data: object): string {
-    return sign({ data }, this.secret, {
+    return sign({ data, typ: "access" }, this.secret, {
       expiresIn: this.accessTokenExpiry
     } as SignOptions);
   }
 
   generateRefreshToken(data: object): string {
-    return sign({ data }, this.secret, {
+    return sign({ data, typ: "refresh" }, this.secret, {
       expiresIn: this.refreshTokenExpiry
     } as SignOptions);
   }
@@ -63,5 +63,15 @@ export class JWTService {
       }
       throw new UnauthorizedException("Invalid token");
     }
+  }
+
+  /** Verifies the token AND that it was issued as the expected kind, so an access token can't
+   *  be replayed as a refresh token (or vice versa) even though both are valid, signed JWTs. */
+  verifyTypedToken(token: string, expectedType: "access" | "refresh"): JwtPayload {
+    const payload = this.verifyToken(token);
+    if (payload.typ !== expectedType) {
+      throw new UnauthorizedException("Invalid token type");
+    }
+    return payload;
   }
 }

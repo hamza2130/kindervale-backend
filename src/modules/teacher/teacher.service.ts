@@ -1,12 +1,13 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, ilike, inArray, notInArray, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, isNull, notInArray, or, type SQL } from "drizzle-orm";
 import { assertPortalAccess, assertPortalForCreate, callerPortal, DAYCARE_CLASS_NAMES } from "common/portal-scope";
+import { refreshTokensTable } from "models/auth";
 import { classesTable } from "models/school";
 import teachersTable, { type Teacher } from "models/teachers";
 import usersTable from "models/users";
 import { ClassroomService } from "modules/classroom/classroom.service";
 import { DatabaseService } from "modules/database/database.service";
-import type { CreateTeacherDto, TeacherListQueryDto, UpdateTeacherDto } from "modules/teacher/teacher.dto";
+import type { CreateTeacherDto, SelfUpdateTeacherDto, TeacherListQueryDto, UpdateTeacherDto } from "modules/teacher/teacher.dto";
 
 type RequestingUser = { userId: string; role: string };
 
@@ -102,6 +103,7 @@ export class TeacherService {
           bio: teachersTable.bio,
           attendance: teachersTable.attendance,
           salary: teachersTable.salary,
+          archivedAt: teachersTable.archivedAt,
           createdAt: teachersTable.createdAt,
           updatedAt: teachersTable.updatedAt,
           name: usersTable.name,
@@ -139,6 +141,7 @@ export class TeacherService {
         bio: teachersTable.bio,
         attendance: teachersTable.attendance,
         salary: teachersTable.salary,
+        archivedAt: teachersTable.archivedAt,
         createdAt: teachersTable.createdAt,
         updatedAt: teachersTable.updatedAt,
         name: usersTable.name,
@@ -177,6 +180,7 @@ export class TeacherService {
         bio: teachersTable.bio,
         attendance: teachersTable.attendance,
         salary: teachersTable.salary,
+        archivedAt: teachersTable.archivedAt,
         createdAt: teachersTable.createdAt,
         updatedAt: teachersTable.updatedAt,
         name: usersTable.name,
@@ -194,9 +198,24 @@ export class TeacherService {
     return teacher as TeacherWithUser;
   }
 
-  async updateTeacherByUserId(userId: string, dto: UpdateTeacherDto): Promise<TeacherWithUser> {
+  // Called only from PATCH /teachers/me (SelfUpdateTeacherDto: name/phone/qualifications/bio
+  // only). SelfUpdateTeacherDto has no salary/className/attendance/makeHomeroom/userId fields,
+  // so forwarding it into the general updateTeacher() below can never touch those -- there is
+  // nothing on the object for it to destructure.
+  async updateTeacherByUserId(userId: string, dto: SelfUpdateTeacherDto): Promise<TeacherWithUser> {
     const teacherId = await this.ensureTeacherProfileId(userId);
     return this.updateTeacher(teacherId, dto);
+  }
+
+  /** The Accountant's dedicated salary screen. Not portal-restricted -- Accountant sees both. */
+  async updateSalary(id: string, salary: number): Promise<TeacherWithUser> {
+    const [teacher] = await this.databaseService.db
+      .update(teachersTable)
+      .set({ salary: salary.toString(), updatedAt: new Date() })
+      .where(eq(teachersTable.id, id))
+      .returning({ id: teachersTable.id });
+    if (!teacher) throw new NotFoundException("Teacher not found");
+    return this.getTeacher(id);
   }
 
   /**
@@ -228,8 +247,15 @@ export class TeacherService {
   // updateTeacherByUserId's self-service call below deliberately omits it -- a teacher editing
   // their own profile is never portal-restricted, since it's already their own record by
   // definition.
-  async updateTeacher(id: string, dto: UpdateTeacherDto, requestingUser?: RequestingUser): Promise<TeacherWithUser> {
-    const { name, makeHomeroom, salary, ...teacherFields } = dto;
+  async updateTeacher(
+    id: string,
+    dto: UpdateTeacherDto | SelfUpdateTeacherDto,
+    requestingUser?: RequestingUser
+  ): Promise<TeacherWithUser> {
+    // dto may be the narrower SelfUpdateTeacherDto (no makeHomeroom/className/subject/attendance/
+    // userId at all) -- cast to read the admin-only fields, which are simply undefined when a
+    // teacher is editing their own profile.
+    const { name, makeHomeroom, ...teacherFields } = dto as UpdateTeacherDto;
     const adminCaller = isAdminRole(requestingUser?.role);
 
     if (requestingUser && !adminCaller) {
@@ -240,12 +266,12 @@ export class TeacherService {
         .limit(1);
       if (!existing) throw new NotFoundException("Teacher not found");
       assertPortalAccess(requestingUser.role, existing.className, "Teacher not found");
-      if (dto.className !== undefined) assertPortalForCreate(requestingUser.role, dto.className);
+      if (teacherFields.className !== undefined) assertPortalForCreate(requestingUser.role, teacherFields.className);
     }
 
     const [teacher] = await this.databaseService.db
       .update(teachersTable)
-      .set({ ...teacherFields, salary: salary !== undefined ? salary.toString() : undefined, updatedAt: new Date() })
+      .set({ ...teacherFields, updatedAt: new Date() })
       .where(eq(teachersTable.id, id))
       .returning();
 
@@ -253,7 +279,7 @@ export class TeacherService {
       throw new NotFoundException("Teacher not found");
     }
 
-    if (makeHomeroom) await this.applyHomeroom(teacher.userId, dto.className ?? teacher.className);
+    if (makeHomeroom) await this.applyHomeroom(teacher.userId, teacherFields.className ?? teacher.className);
 
     if (name !== undefined) {
       await this.databaseService.db
@@ -273,6 +299,7 @@ export class TeacherService {
         bio: teachersTable.bio,
         attendance: teachersTable.attendance,
         salary: teachersTable.salary,
+        archivedAt: teachersTable.archivedAt,
         createdAt: teachersTable.createdAt,
         updatedAt: teachersTable.updatedAt,
         name: usersTable.name,
@@ -290,9 +317,16 @@ export class TeacherService {
     return updatedTeacher as TeacherWithUser;
   }
 
+  /**
+   * A departed teacher is archived, not deleted: the profile row, salary and attendance history
+   * all stay untouched (only archivedAt is set, so `includeArchived` can still surface them).
+   * Their login is separately revoked -- status -> ARCHIVED (refused at login, same as INACTIVE)
+   * and every refresh token invalidated -- and any homeroom assignment pointing at them is
+   * cleared so the class isn't left silently pointing at someone who can no longer log in.
+   */
   async deleteTeacher(id: string, requestingUser?: RequestingUser): Promise<void> {
     const [existing] = await this.databaseService.db
-      .select({ className: teachersTable.className })
+      .select({ userId: teachersTable.userId, className: teachersTable.className })
       .from(teachersTable)
       .where(eq(teachersTable.id, id))
       .limit(1);
@@ -301,14 +335,23 @@ export class TeacherService {
       assertPortalAccess(requestingUser?.role, existing.className, "Teacher not found");
     }
 
-    const [teacher] = await this.databaseService.db
-      .delete(teachersTable)
-      .where(eq(teachersTable.id, id))
-      .returning({ id: teachersTable.id });
+    const now = new Date();
+    await this.databaseService.db
+      .update(teachersTable)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(eq(teachersTable.id, id));
 
-    if (!teacher) {
-      throw new NotFoundException("Teacher not found");
-    }
+    await this.databaseService.db
+      .update(classesTable)
+      .set({ homeroomTeacherId: null })
+      .where(eq(classesTable.homeroomTeacherId, existing.userId));
+
+    await this.databaseService.db.update(usersTable).set({ status: "ARCHIVED", updatedAt: now }).where(eq(usersTable.id, existing.userId));
+
+    await this.databaseService.db
+      .update(refreshTokensTable)
+      .set({ revokedAt: now })
+      .where(and(eq(refreshTokensTable.userId, existing.userId), isNull(refreshTokensTable.revokedAt)));
   }
 
   private buildTeacherWhere(query: TeacherListQueryDto): SQL | undefined {
@@ -317,6 +360,7 @@ export class TeacherService {
     if (query.subject) conditions.push(eq(teachersTable.subject, query.subject));
     if (query.className) conditions.push(eq(teachersTable.className, query.className));
     if (query.attendance) conditions.push(eq(teachersTable.attendance, query.attendance));
+    if (!query.includeArchived) conditions.push(isNull(teachersTable.archivedAt));
     if (query.search) {
       const searchCondition = or(
         ilike(teachersTable.subject, `%${query.search}%`),

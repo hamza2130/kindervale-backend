@@ -22,6 +22,10 @@ const defaultModules = [
   "students",
   "parents",
   "teachers",
+  // Split out from "teachers" so only the Accountant can change a salary after creation, while
+  // Admin/Principal keep read-only visibility (a teacher's salary is already part of the regular
+  // teacher list/detail payload -- this module only gates the write).
+  "teacher-salary",
   "classes",
   "sections",
   "subjects",
@@ -61,9 +65,12 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
       PermissionAction[]
     >),
     // Only the Accountant role may create/edit expenses and fees; Admin can see the numbers but
-    // not touch them.
+    // not touch them. Same for a teacher's salary once set -- Admin sets it once at creation
+    // (that's the "teachers" CREATE grant above, which still includes the salary field), but
+    // only the Accountant may change it afterwards.
     expenses: ["READ"],
-    fees: ["READ"]
+    fees: ["READ"],
+    "teacher-salary": ["READ"]
   },
   DAYCAREADMIN: {
     dashboard: ["READ"],
@@ -83,26 +90,33 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     // Read-only: fee rows only carry a student id, so the accountant needs names to make sense of them.
     students: ["READ"],
     expenses: ["CREATE", "READ", "UPDATE", "DELETE"],
-    fees: ["CREATE", "READ", "UPDATE"]
+    fees: ["CREATE", "READ", "UPDATE"],
+    // The one write the Accountant is granted on a teacher's record after creation.
+    teachers: ["READ"],
+    "teacher-salary": ["READ", "UPDATE"]
   },
+  // Read-only across the board, including everyone's salary -- Principal never creates, edits,
+  // approves or deletes anything through a permission grant here. "Admin approves the reports"
+  // (report-cards) is enforced by the report-card workflow itself, not by giving Principal UPDATE.
   PRINCIPAL: {
     dashboard: ["READ"],
     students: ["READ"],
     parents: ["READ"],
-    teachers: ["READ", "UPDATE"],
-    classes: ["READ", "UPDATE"],
-    sections: ["READ", "UPDATE"],
-    subjects: ["READ", "UPDATE"],
+    teachers: ["READ"],
+    "teacher-salary": ["READ"],
+    classes: ["READ"],
+    sections: ["READ"],
+    subjects: ["READ"],
     attendance: ["READ"],
     "staff-attendance": ["READ"],
     homework: ["READ"],
-    "report-cards": ["READ", "UPDATE"],
-    "weekly-objectives": ["READ", "UPDATE"],
+    "report-cards": ["READ"],
+    "weekly-objectives": ["READ"],
     "homework-submissions": ["READ"],
     "daycare-reports": ["READ"],
     fees: ["READ"],
     expenses: ["READ"],
-    notices: ["CREATE", "READ", "UPDATE", "DELETE"],
+    notices: ["READ"],
     calendar: ["READ"],
     documents: ["READ"],
     exams: ["READ"],
@@ -339,9 +353,18 @@ export class RoleService implements OnApplicationBootstrap {
     // Purely-additive seeding (the loop below, kept for every other role) would never remove them,
     // which would silently defeat the narrower access these two roles now have: the old MANAGE
     // grants would still be found and allowed. These two are wiped and rebuilt from
-    // defaultRoleAccess exactly on every boot instead. Every other role keeps the additive
-    // behavior, so any manual tweaks made via assignPermissions() survive restarts.
-    const reconciledRoles: UserRole[] = ["ADMIN", "DAYCAREADMIN", "TEACHER"];
+    // defaultRoleAccess exactly on every boot instead.
+    //
+    // Every system role is now reconciled, not just these two: Principal's grants were just cut
+    // back to read-only (previously had UPDATE on teachers/classes/sections/subjects/report-cards/
+    // weekly-objectives and full CRUD on notices) and Accountant just gained "teacher-salary" --
+    // additive-only seeding would leave Principal's old broader grants sitting in role_permissions
+    // right alongside the narrower ones, so the "MANAGE" fallback in userRoleCan() would still
+    // authorize the very actions this change is meant to remove. Any manual tweaks made via
+    // assignPermissions() through the admin UI will no longer survive a restart for any role --
+    // that trade-off is accepted here in exchange for defaultRoleAccess actually being the source
+    // of truth everywhere, not just for two roles.
+    const reconciledRoles: UserRole[] = [...userRoleEnum.enumValues];
     for (const role of roles) {
       if (!reconciledRoles.includes(role.name)) continue;
       const roleAccess = defaultRoleAccess[role.name];

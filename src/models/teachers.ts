@@ -21,6 +21,11 @@ const teachersTable = pgTable("teachers", {
   // existed have no figure yet, and the payroll job (school.service.ts-adjacent) simply skips
   // a teacher with no salary set rather than treating it as zero.
   salary: numeric({ precision: 10, scale: 2 }),
+  // Set when a departed teacher is removed: their record, salary and attendance history stay
+  // (nothing here cascades), only their login is revoked (usersTable.status -> ARCHIVED).
+  // Denormalized onto this row (rather than joining usersTable) so list/count queries that
+  // filter archived teachers out don't need an extra join.
+  archivedAt: timestamp(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });

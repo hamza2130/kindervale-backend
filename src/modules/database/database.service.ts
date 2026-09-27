@@ -198,6 +198,23 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "payroll_period" text
       `);
 
+      // Archiving (soft delete keeps history; login is refused same as INACTIVE) + forced
+      // password change after an Admin/Accountant sets someone else's password for them.
+      await this.db.execute(sql`ALTER TYPE "user_status" ADD VALUE IF NOT EXISTS 'ARCHIVED'`);
+      await this.db.execute(sql`
+        ALTER TABLE "users"
+          ADD COLUMN IF NOT EXISTS "must_change_password" boolean NOT NULL DEFAULT false
+      `);
+
+      // Denormalized soft-delete marker for a departed teacher (see TeacherService.deleteTeacher):
+      // the profile/salary/attendance rows stay, only this timestamp + the linked user's status
+      // change. Kept on this table (not joined from usersTable) so getTeachers()'s paginated
+      // select and its unjoined count() query can both filter on it without a join mismatch.
+      await this.db.execute(sql`
+        ALTER TABLE "teachers"
+          ADD COLUMN IF NOT EXISTS "archived_at" timestamp
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);
