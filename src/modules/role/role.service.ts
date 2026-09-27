@@ -41,6 +41,10 @@ const defaultModules = [
   "exams",
   "timetables",
   "expenses",
+  // Read-only aggregated financial reports (P&L, fee collection by month, overdue/defaulters) --
+  // distinct from "expenses"/"fees" (which gate creating/editing the underlying rows) so a role
+  // can see the rollups without being able to touch a single invoice or expense.
+  "reports",
   "leave-requests",
   "faqs",
   "school-policies",
@@ -101,6 +105,7 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     students: ["READ"],
     expenses: ["CREATE", "READ", "UPDATE", "DELETE"],
     fees: ["CREATE", "READ", "UPDATE"],
+    reports: ["READ"],
     // The one write the Accountant is granted on a teacher's record after creation.
     teachers: ["READ"],
     "teacher-salary": ["READ", "UPDATE"]
@@ -126,6 +131,7 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     "daycare-reports": ["READ"],
     fees: ["READ"],
     expenses: ["READ"],
+    reports: ["READ"],
     notices: ["READ"],
     calendar: ["READ"],
     documents: ["READ"],
