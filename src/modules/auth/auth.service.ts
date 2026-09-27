@@ -4,7 +4,8 @@ import { normalizePortalRole } from "common/role-normalizer";
 import { and, desc, eq, gt, ilike, isNull, or } from "drizzle-orm";
 import { passwordResetTokensTable, refreshTokensTable } from "models/auth";
 import adminsTable from "models/admins";
-import { parentsTable, studentsTable } from "models/school";
+import { classNameToPortal } from "common/portal-scope";
+import { classesTable, parentsTable, studentsTable } from "models/school";
 import teachersTable from "models/teachers";
 import usersTable, { type SafeUser, type UserRole } from "models/users";
 import { DatabaseService } from "modules/database/database.service";
@@ -121,6 +122,26 @@ export class AuthService {
 
     if (user.status !== "ACTIVE") {
       throw new UnauthorizedException("User is inactive");
+    }
+
+    // Daycare staff are records only (salary, attendance) -- they have no portal of their own.
+    if (user.role === "TEACHER") {
+      const [teacher] = await this.databaseService.db
+        .select({ className: teachersTable.className })
+        .from(teachersTable)
+        .where(eq(teachersTable.userId, user.id))
+        .limit(1);
+      if (teacher?.className) {
+        const [classRoom] = await this.databaseService.db
+          .select({ portal: classesTable.portal })
+          .from(classesTable)
+          .where(eq(classesTable.name, teacher.className))
+          .limit(1);
+        const portal = classRoom?.portal ?? classNameToPortal(teacher.className);
+        if (portal === "Daycare") {
+          throw new UnauthorizedException("Daycare staff do not have portal access");
+        }
+      }
     }
 
     const isPasswordValid = await this.hashService.compare(dto.password, user.password);
