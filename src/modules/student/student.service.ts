@@ -2,10 +2,12 @@ import { ConflictException, Injectable, NotFoundException } from "@nestjs/common
 import { createId } from "@paralleldrive/cuid2";
 import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, notInArray, or, type SQL } from "drizzle-orm";
 import {
+  assertHomeroomAccess,
   assertPortalAccess,
   assertPortalForCreate,
   callerPortal,
   DAYCARE_CLASS_NAMES,
+  homeroomFilterCondition,
   type PortalCaller,
   type SchoolPortal
 } from "common/portal-scope";
@@ -50,7 +52,7 @@ export class StudentService {
 
   async getStudents(
     query: StudentListQueryDto,
-    requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }
+    requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null; homeroomClassName?: string | null }
   ) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
@@ -72,7 +74,10 @@ export class StudentService {
     // Confined the same way createStudent now is: an Admin's own roster request should never
     // include Daycare children, and vice versa, regardless of what className filter (if any)
     // the client asked for.
-    const where = this.applyPortalFilter(this.buildStudentWhere(scopedQuery), requestingUser);
+    const portalWhere = this.applyPortalFilter(this.buildStudentWhere(scopedQuery), requestingUser);
+    // Decision 7: a teacher sees only their own homeroom class, not their whole portal.
+    const homeroomCondition = homeroomFilterCondition(studentsTable.className, requestingUser);
+    const where = homeroomCondition ? (portalWhere ? and(portalWhere, homeroomCondition) : homeroomCondition) : portalWhere;
     const sortColumn = studentsTable[query.sortBy ?? "createdAt"];
     const orderBy = query.sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn);
 
@@ -94,7 +99,7 @@ export class StudentService {
 
   async getStudent(
     id: string,
-    requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }
+    requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null; homeroomClassName?: string | null }
   ): Promise<Student> {
     const [student] = await this.databaseService.db.select().from(studentsTable).where(eq(studentsTable.id, id)).limit(1);
     if (!student) throw new NotFoundException("Student not found");
@@ -110,6 +115,7 @@ export class StudentService {
       }
     }
     assertPortalAccess(requestingUser, student.className, "Student not found");
+    assertHomeroomAccess(requestingUser, student.className, "Student not found");
 
     return student;
   }

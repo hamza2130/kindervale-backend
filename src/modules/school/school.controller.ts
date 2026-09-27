@@ -127,26 +127,45 @@ export class SchoolController {
 
   @RequirePermission("report-cards", "CREATE")
   @Post("report-cards")
-  async createReportCard(@Body() dto: CreateReportCardDto, @User("userId") userId: string) {
-    return { data: await this.schoolService.createReportCard(dto, userId) };
+  async createReportCard(
+    @Body() dto: CreateReportCardDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.schoolService.createReportCard(dto, userId, { role, homeroomClassName }) };
   }
 
   @RequirePermission("report-cards", "READ")
   @Get("report-cards")
-  async getReportCards(@User("userId") userId: string, @User("role") role: string) {
-    return { data: await this.schoolService.getReportCards({ userId, role }) };
+  async getReportCards(
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.schoolService.getReportCards({ userId, role, homeroomClassName }) };
   }
 
   @RequirePermission("report-cards", "READ")
   @Get("report-cards/:id")
-  async getReportCard(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
-    return { data: await this.schoolService.getReportCard(id, { userId, role }) };
+  async getReportCard(
+    @Param() { id }: ParamDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.schoolService.getReportCard(id, { userId, role, homeroomClassName }) };
   }
 
   @RequirePermission("report-cards", "UPDATE")
   @Patch("report-cards/:id")
-  async updateReportCard(@Param() { id }: ParamDto, @Body() dto: UpdateReportCardDto) {
-    return { data: await this.schoolService.updateReportCard(id, dto) };
+  async updateReportCard(
+    @Param() { id }: ParamDto,
+    @Body() dto: UpdateReportCardDto,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.schoolService.updateReportCard(id, dto, { role, homeroomClassName }) };
   }
 
   // MANAGE, not UPDATE: a teacher has UPDATE on report-cards (to edit their own draft) but never
@@ -277,14 +296,19 @@ export class SchoolController {
 
   @RequirePermission("weekly-objectives", "CREATE")
   @Post("weekly-objectives")
-  async createWeeklyObjective(@Body() dto: CreateWeeklyObjectiveDto, @User("userId") userId: string) {
-    return { data: await this.schoolService.createWeeklyObjective(dto, userId) };
+  async createWeeklyObjective(
+    @Body() dto: CreateWeeklyObjectiveDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.schoolService.createWeeklyObjective(dto, userId, { role, homeroomClassName }) };
   }
 
   @RequirePermission("weekly-objectives", "READ")
   @Get("weekly-objectives")
-  async getWeeklyObjectives() {
-    return { data: await this.schoolService.getWeeklyObjectives() };
+  async getWeeklyObjectives(@User("role") role: string, @User("homeroomClassName") homeroomClassName?: string | null) {
+    return { data: await this.schoolService.getWeeklyObjectives({ role, homeroomClassName }) };
   }
 
   @RequirePermission("weekly-objectives", "UPDATE")

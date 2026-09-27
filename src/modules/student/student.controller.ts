@@ -25,9 +25,10 @@ export class StudentController {
     @Query() query: StudentListQueryDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    return { data: await this.studentService.getStudents(query, { userId, role, portal }) };
+    return { data: await this.studentService.getStudents(query, { userId, role, portal, homeroomClassName }) };
   }
 
   @RequirePermission("students", "READ")
@@ -36,9 +37,10 @@ export class StudentController {
     @Param() { id }: ParamDto,
     @User("userId") userId: string,
     @User("role") role: string,
-    @User("portal") portal?: SchoolPortal
+    @User("portal") portal?: SchoolPortal,
+    @User("homeroomClassName") homeroomClassName?: string | null
   ) {
-    return { data: await this.studentService.getStudent(id, { userId, role, portal }) };
+    return { data: await this.studentService.getStudent(id, { userId, role, portal, homeroomClassName }) };
   }
 
   @RequirePermission("students", "UPDATE")

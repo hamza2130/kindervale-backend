@@ -311,6 +311,21 @@ export class RoleService implements OnApplicationBootstrap {
    * row yet (or an unassigned class) resolves to Kindervale, the same default classNameToPortal
    * gives every unrecognised class name.
    */
+  /**
+   * The specific homeroom className for a teacher's profile, or null if they have none yet
+   * (blank string on the row, or no profile at all). Distinct from teacherPortal() below --
+   * that resolves Kindervale vs Daycare; this is decision 7's finer-grained scope, confining a
+   * teacher to their own class specifically.
+   */
+  async teacherHomeroomClassName(userId: string): Promise<string | null> {
+    const [teacher] = await this.databaseService.db
+      .select({ className: teachersTable.className })
+      .from(teachersTable)
+      .where(eq(teachersTable.userId, userId))
+      .limit(1);
+    return teacher?.className || null;
+  }
+
   async teacherPortal(userId: string): Promise<SchoolPortal> {
     const [teacher] = await this.databaseService.db
       .select({ className: teachersTable.className })

@@ -14,32 +14,42 @@ export class HomeworkController {
 
   @RequirePermission("homework", "CREATE")
   @Post()
-  async createHomework(@Body() dto: CreateHomeworkDto, @User("userId") userId: string) {
-    return { data: await this.homeworkService.createHomework(dto, userId) };
+  async createHomework(
+    @Body() dto: CreateHomeworkDto,
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.homeworkService.createHomework(dto, userId, { role, homeroomClassName }) };
   }
 
   @RequirePermission("homework", "READ")
   @Get()
-  async getHomework(@Query() query: HomeworkListQueryDto) {
-    return { data: await this.homeworkService.getHomework(query) };
+  async getHomework(@Query() query: HomeworkListQueryDto, @User("role") role: string, @User("homeroomClassName") homeroomClassName?: string | null) {
+    return { data: await this.homeworkService.getHomework(query, { role, homeroomClassName }) };
   }
 
   @RequirePermission("homework", "READ")
   @Get(":id")
-  async getHomeworkItem(@Param() { id }: ParamDto) {
-    return { data: await this.homeworkService.getHomeworkItem(id) };
+  async getHomeworkItem(@Param() { id }: ParamDto, @User("role") role: string, @User("homeroomClassName") homeroomClassName?: string | null) {
+    return { data: await this.homeworkService.getHomeworkItem(id, { role, homeroomClassName }) };
   }
 
   @RequirePermission("homework", "UPDATE")
   @Patch(":id")
-  async updateHomework(@Param() { id }: ParamDto, @Body() dto: UpdateHomeworkDto) {
-    return { data: await this.homeworkService.updateHomework(id, dto) };
+  async updateHomework(
+    @Param() { id }: ParamDto,
+    @Body() dto: UpdateHomeworkDto,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.homeworkService.updateHomework(id, dto, { role, homeroomClassName }) };
   }
 
   @RequirePermission("homework", "DELETE")
   @Delete(":id")
-  async deleteHomework(@Param() { id }: ParamDto) {
-    await this.homeworkService.deleteHomework(id);
+  async deleteHomework(@Param() { id }: ParamDto, @User("role") role: string, @User("homeroomClassName") homeroomClassName?: string | null) {
+    await this.homeworkService.deleteHomework(id, { role, homeroomClassName });
     return { message: "Homework deleted successfully" };
   }
 }

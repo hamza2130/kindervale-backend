@@ -1,4 +1,6 @@
 import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { eq, type SQL } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
 
 /**
  * Which class names belong to the Daycare side of the school. Mirrors the frontend's
@@ -97,4 +99,44 @@ export const assertExactPortalAccess = (
   if ((recordPortal ?? "Kindervale") !== required) {
     throw new NotFoundException(notFoundMessage);
   }
+};
+
+/**
+ * A caller carrying the TEACHER-only homeroom className PermissionGuard resolves per request
+ * (mirrors how `portal` is already resolved there) -- decision 7: a teacher sees only the class
+ * they are homeroom teacher for, not their whole portal. Every other role is unrestricted by
+ * this (Admin/Principal/Daycare Admin/Accountant/Parent all use their own, different scoping).
+ */
+export type HomeroomCaller = { role?: string; homeroomClassName?: string | null } | undefined;
+
+const isTeacherCaller = (caller: HomeroomCaller): boolean => normalizeRole(caller?.role) === "TEACHER";
+
+/**
+ * Throws (as "not found", same posture as assertPortalAccess) if the caller is a teacher and the
+ * record's className isn't their own homeroom. A teacher with no homeroom assigned yet is
+ * confined to a class name that matches nothing, so they see nothing rather than everything.
+ */
+export const assertHomeroomAccess = (caller: HomeroomCaller, recordClassName: string | null | undefined, notFoundMessage: string): void => {
+  if (!isTeacherCaller(caller)) return;
+  if ((recordClassName ?? null) !== (caller?.homeroomClassName ?? null) || !caller?.homeroomClassName) {
+    throw new NotFoundException(notFoundMessage);
+  }
+};
+
+/** For create: rejects a teacher writing a className that isn't their own homeroom. */
+export const assertHomeroomForCreate = (caller: HomeroomCaller, className: string | null | undefined): void => {
+  if (!isTeacherCaller(caller)) return;
+  if (!caller?.homeroomClassName || className !== caller.homeroomClassName) {
+    throw new ForbiddenException("You can only do this for your own homeroom class");
+  }
+};
+
+/**
+ * The WHERE-clause counterpart, for list endpoints: a SQL condition confining a teacher caller
+ * to their own homeroom className, or undefined for every other role (no extra restriction).
+ * A teacher with no homeroom yet gets a condition that matches no row, not every row.
+ */
+export const homeroomFilterCondition = (classNameColumn: PgColumn, caller: HomeroomCaller): SQL | undefined => {
+  if (!isTeacherCaller(caller)) return undefined;
+  return eq(classNameColumn, caller?.homeroomClassName ?? "__no_homeroom_assigned__");
 };

@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { and, asc, count, desc, eq, gte, ilike, lte, or, type SQL } from "drizzle-orm";
+import { assertHomeroomAccess, assertHomeroomForCreate, homeroomFilterCondition, type HomeroomCaller } from "common/portal-scope";
 import { classesTable, homeworkTable, subjectsTable, type Homework } from "models/school";
 import usersTable from "models/users";
 import { DatabaseService } from "modules/database/database.service";
@@ -9,20 +10,24 @@ import type { CreateHomeworkDto, HomeworkListQueryDto, UpdateHomeworkDto } from 
 export class HomeworkService {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async createHomework(dto: CreateHomeworkDto, teacherIdFromToken?: string): Promise<Homework> {
+  async createHomework(dto: CreateHomeworkDto, teacherIdFromToken?: string, requestingUser?: HomeroomCaller): Promise<Homework> {
     const teacherId = dto.teacherId ?? teacherIdFromToken;
     await this.validateRelations(dto.classId, dto.subjectId, teacherId);
+    // Decision 7: a teacher may only assign homework to their own homeroom class.
+    assertHomeroomForCreate(requestingUser, dto.className);
 
     const [homework] = await this.databaseService.db.insert(homeworkTable).values({ ...dto, teacherId }).returning();
     if (!homework) throw new ConflictException("Failed to create homework");
     return homework;
   }
 
-  async getHomework(query: HomeworkListQueryDto) {
+  async getHomework(query: HomeworkListQueryDto, requestingUser?: HomeroomCaller) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const offset = (page - 1) * limit;
-    const where = this.buildHomeworkWhere(query);
+    const baseWhere = this.buildHomeworkWhere(query);
+    const homeroomCondition = homeroomFilterCondition(homeworkTable.className, requestingUser);
+    const where = homeroomCondition ? (baseWhere ? and(baseWhere, homeroomCondition) : homeroomCondition) : baseWhere;
     const sortColumn = homeworkTable[query.sortBy ?? "dueDate"];
     const orderBy = query.sortOrder === "asc" ? asc(sortColumn) : desc(sortColumn);
 
@@ -37,14 +42,22 @@ export class HomeworkService {
     };
   }
 
-  async getHomeworkItem(id: string): Promise<Homework> {
+  async getHomeworkItem(id: string, requestingUser?: HomeroomCaller): Promise<Homework> {
     const [homework] = await this.databaseService.db.select().from(homeworkTable).where(eq(homeworkTable.id, id)).limit(1);
     if (!homework) throw new NotFoundException("Homework not found");
+    assertHomeroomAccess(requestingUser, homework.className, "Homework not found");
     return homework;
   }
 
-  async updateHomework(id: string, dto: UpdateHomeworkDto): Promise<Homework> {
+  async updateHomework(id: string, dto: UpdateHomeworkDto, requestingUser?: HomeroomCaller): Promise<Homework> {
     await this.validateRelations(dto.classId, dto.subjectId, dto.teacherId);
+
+    const [existing] = await this.databaseService.db.select({ className: homeworkTable.className }).from(homeworkTable).where(eq(homeworkTable.id, id)).limit(1);
+    if (!existing) throw new NotFoundException("Homework not found");
+    assertHomeroomAccess(requestingUser, existing.className, "Homework not found");
+    // A className change has to stay within the teacher's own homeroom -- otherwise they could
+    // "move" someone else's homework into their class, or their own out of it.
+    if (dto.className !== undefined) assertHomeroomForCreate(requestingUser, dto.className);
 
     const [homework] = await this.databaseService.db
       .update(homeworkTable)
@@ -56,7 +69,11 @@ export class HomeworkService {
     return homework;
   }
 
-  async deleteHomework(id: string): Promise<void> {
+  async deleteHomework(id: string, requestingUser?: HomeroomCaller): Promise<void> {
+    const [existing] = await this.databaseService.db.select({ className: homeworkTable.className }).from(homeworkTable).where(eq(homeworkTable.id, id)).limit(1);
+    if (!existing) throw new NotFoundException("Homework not found");
+    assertHomeroomAccess(requestingUser, existing.className, "Homework not found");
+
     const [homework] = await this.databaseService.db
       .delete(homeworkTable)
       .where(eq(homeworkTable.id, id))
