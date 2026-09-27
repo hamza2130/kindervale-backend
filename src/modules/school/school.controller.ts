@@ -44,7 +44,9 @@ import {
   UpdateSchoolPolicyDto,
   UpdateTimetableDto,
   UpsertSettingsDto,
-  VoidFeeDto
+  VoidFeeDto,
+  CreateFeeStructureDto,
+  UpdateFeeStructureDto
 } from "modules/school/school.dto";
 import { SchoolService } from "modules/school/school.service";
 
@@ -95,6 +97,34 @@ export class SchoolController {
   @Post("fees/:id/void")
   async voidFee(@Param() { id }: ParamDto, @Body() dto: VoidFeeDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.voidFee(id, dto, { userId, role }) };
+  }
+
+  // Upsert by className -- "set the fee for Prep-A" without the caller needing to know an id.
+  @RequirePermission("fees", "CREATE")
+  @Post("fee-structures")
+  async upsertFeeStructure(@Body() dto: CreateFeeStructureDto) {
+    return { data: await this.schoolService.upsertFeeStructure(dto) };
+  }
+
+  @RequirePermission("fees", "READ")
+  @Get("fee-structures")
+  async getFeeStructures() {
+    return { data: await this.schoolService.getFeeStructures() };
+  }
+
+  @RequirePermission("fees", "UPDATE")
+  @Patch("fee-structures/:id")
+  async updateFeeStructure(@Param() { id }: ParamDto, @Body() dto: UpdateFeeStructureDto) {
+    return { data: await this.schoolService.updateFeeStructure(id, dto) };
+  }
+
+  // fees:DELETE isn't granted to anyone today (same as fees themselves) -- left unreachable
+  // rather than wired to a permission nobody has, consistent with deleteFee below.
+  @RequirePermission("fees", "DELETE")
+  @Delete("fee-structures/:id")
+  async deleteFeeStructure(@Param() { id }: ParamDto) {
+    await this.schoolService.deleteFeeStructure(id);
+    return { message: "Fee structure deleted successfully" };
   }
 
   @RequirePermission("fees", "DELETE")

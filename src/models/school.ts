@@ -143,6 +143,21 @@ export const feesTable = pgTable("fees", {
   updatedAt: timestamp().defaultNow().notNull()
 });
 
+/**
+ * The default monthly fee for a class, used to actually generate invoices instead of the flat
+ * hardcoded amount every student used to get regardless of which class they're in. Daycare is
+ * never billed per child (decision 3), so a structure only ever makes sense for a Kindervale
+ * class in practice -- nothing here enforces that at the schema level, since the invoice-
+ * generation flow already only ever targets Kindervale students.
+ */
+export const feeStructuresTable = pgTable("fee_structures", {
+  id: cuid().primaryKey(),
+  className: text().notNull().unique(),
+  amount: numeric({ precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp().defaultNow().notNull(),
+  updatedAt: timestamp().defaultNow().notNull()
+});
+
 export const examsTable = pgTable("exams", {
   id: cuid().primaryKey(),
   title: text().notNull(),
@@ -484,6 +499,7 @@ export type StaffAttendance = typeof staffAttendanceTable.$inferSelect;
 
 export type Attendance = typeof attendanceTable.$inferSelect;
 export type Fee = typeof feesTable.$inferSelect;
+export type FeeStructure = typeof feeStructuresTable.$inferSelect;
 export type Exam = typeof examsTable.$inferSelect;
 export type ReportCard = typeof reportCardsTable.$inferSelect;
 export type Homework = typeof homeworkTable.$inferSelect;

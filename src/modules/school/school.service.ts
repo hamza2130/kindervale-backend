@@ -33,6 +33,8 @@ import {
   incomeTable,
   faqsTable,
   feesTable,
+  feeStructuresTable,
+  type FeeStructure,
   leaveRequestsTable,
   notificationsTable,
   parentsTable,
@@ -79,6 +81,8 @@ import {
   UpdateFaqDto,
   UpdateFeeDto,
   VoidFeeDto,
+  CreateFeeStructureDto,
+  UpdateFeeStructureDto,
   UpdateLeaveRequestDto,
   UpdateNotificationDto,
   UpdateReportCardDto,
@@ -194,6 +198,53 @@ export class SchoolService {
   async voidFee(id: string, dto: VoidFeeDto, requestingUser?: { userId: string; role: string }) {
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
     return this.update(feesTable, id, { status: "VOID", voidedAt: new Date(), voidReason: dto.reason }, "Fee");
+  }
+
+  /**
+   * The default monthly fee for a class (decision 4) -- one row per class, upserted by name so
+   * "set the fee for Prep-A" is a single call whether or not one already exists, rather than the
+   * caller having to know an id.
+   */
+  async upsertFeeStructure(dto: CreateFeeStructureDto): Promise<FeeStructure> {
+    const [existing] = await this.databaseService.db
+      .select({ id: feeStructuresTable.id })
+      .from(feeStructuresTable)
+      .where(eq(feeStructuresTable.className, dto.className))
+      .limit(1);
+
+    if (existing) {
+      const [updated] = await this.databaseService.db
+        .update(feeStructuresTable)
+        .set({ amount: dto.amount.toString(), updatedAt: new Date() })
+        .where(eq(feeStructuresTable.id, existing.id))
+        .returning();
+      if (!updated) throw new ConflictException("Failed to update fee structure");
+      return updated;
+    }
+
+    const [created] = await this.databaseService.db
+      .insert(feeStructuresTable)
+      .values({ className: dto.className, amount: dto.amount.toString() })
+      .returning();
+    if (!created) throw new ConflictException("Failed to create fee structure");
+    return created;
+  }
+
+  getFeeStructures(): Promise<FeeStructure[]> {
+    return this.databaseService.db.select().from(feeStructuresTable);
+  }
+
+  async updateFeeStructure(id: string, dto: UpdateFeeStructureDto) {
+    return this.update(
+      feeStructuresTable,
+      id,
+      { ...dto, amount: dto.amount !== undefined ? dto.amount.toString() : undefined },
+      "Fee structure"
+    );
+  }
+
+  deleteFeeStructure(id: string) {
+    return this.delete(feeStructuresTable, id, "Fee structure");
   }
 
   createExam(dto: CreateExamDto) {
