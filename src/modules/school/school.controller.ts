@@ -46,7 +46,9 @@ import {
   UpsertSettingsDto,
   VoidFeeDto,
   CreateFeeStructureDto,
-  UpdateFeeStructureDto
+  UpdateFeeStructureDto,
+  StaffAttendanceQueryDto,
+  BulkMarkStaffAttendanceDto
 } from "modules/school/school.dto";
 import { SchoolService } from "modules/school/school.service";
 
@@ -734,13 +736,13 @@ export class SchoolController {
 
   @RequirePermission("staff-attendance", "READ")
   @Get("staff-attendance")
-  async getStaffAttendance(@Query() query: any, @User("userId") userId: string, @User("role") role: string) {
+  async getStaffAttendance(@Query() query: StaffAttendanceQueryDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.getStaffAttendance(query, { userId, role }) };
   }
 
   @RequirePermission("staff-attendance", "UPDATE")
   @Post("staff-attendance/bulk")
-  async bulkMarkStaffAttendance(@Body() dto: any, @User("userId") userId: string, @User("role") role: string) {
+  async bulkMarkStaffAttendance(@Body() dto: BulkMarkStaffAttendanceDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.bulkMarkStaffAttendance(dto, userId, { userId, role }) };
   }
 

@@ -83,6 +83,8 @@ import {
   VoidFeeDto,
   CreateFeeStructureDto,
   UpdateFeeStructureDto,
+  StaffAttendanceQueryDto,
+  BulkMarkStaffAttendanceDto,
   UpdateLeaveRequestDto,
   UpdateNotificationDto,
   UpdateReportCardDto,
@@ -512,6 +514,10 @@ export class SchoolService {
   }
 
   async createLeaveRequest(dto: CreateLeaveRequestDto, role?: string, authenticatedUserId?: string) {
+    // C-20: toDate before fromDate was accepted silently.
+    if (dto.toDate.slice(0, 10) < dto.fromDate.slice(0, 10)) {
+      throw new BadRequestException("Leave 'to' date can't be before the 'from' date");
+    }
     // Daycare has no leave-request flow at all -- absence is marked directly by the Daycare Admin
     // within Daily Activity/attendance, never requested by a parent or filed on a child's behalf.
     // This is an absolute block (unlike the portal-scoped checks elsewhere in this file), so it
@@ -1341,10 +1347,7 @@ export class SchoolService {
   }
 
   // ── Staff Attendance ─────────────────────────────────────────
-  async getStaffAttendance(
-    query: { date?: string; teacherId?: string; fromDate?: string; toDate?: string },
-    requestingUser?: { userId: string; role: string }
-  ) {
+  async getStaffAttendance(query: StaffAttendanceQueryDto, requestingUser?: { userId: string; role: string }) {
     const conditions: SQL[] = [];
     if (query.teacherId) conditions.push(eq(staffAttendanceTable.teacherId, query.teacherId));
     if (query.date) conditions.push(eq(staffAttendanceTable.date, query.date));
@@ -1377,16 +1380,17 @@ export class SchoolService {
     return { items: scoped.map(({ teacherClassName, ...row }) => row) };
   }
 
-  async bulkMarkStaffAttendance(
-    dto: {
-      date: string;
-      records: { teacherId: string; status: string; arrivalTime?: string; departureTime?: string; remarks?: string }[];
-    },
-    markedBy?: string,
-    requestingUser?: { userId: string; role: string }
-  ) {
+  async bulkMarkStaffAttendance(dto: BulkMarkStaffAttendanceDto, markedBy?: string, requestingUser?: { userId: string; role: string }) {
     const date = dto.date.slice(0, 10);
     const required = callerPortal(requestingUser?.role);
+
+    // C-20: an arrival after departure was accepted silently. Only meaningful for PRESENT/LATE,
+    // since ABSENT/ON_LEAVE never carry either (checked below, same as before).
+    for (const rec of dto.records) {
+      if ((rec.status === "PRESENT" || rec.status === "LATE") && rec.arrivalTime && rec.departureTime && rec.arrivalTime >= rec.departureTime) {
+        throw new BadRequestException(`Arrival time must be before departure time (teacher ${rec.teacherId})`);
+      }
+    }
 
     // Confirm every teacherId in the batch belongs to the caller's own portal before writing
     // any of it -- a Daycare Admin's token had nothing stopping it marking a Kindervale
