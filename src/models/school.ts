@@ -126,6 +126,10 @@ export const feesTable = pgTable("fees", {
   amount: numeric({ precision: 10, scale: 2 }).notNull(),
   scholarship: integer().default(0).notNull(),
   dueDate: date().notNull(),
+  // "Submission date" -- when the Accountant actually sent this challan to the family. Set once,
+  // automatically, at creation (this system generates and sends an invoice in one step; there is
+  // no separate draft/send flow), never client-supplied, so it can't be backdated.
+  issuedAt: timestamp().defaultNow().notNull(),
   status: feeStatusEnum().default("PENDING").notNull(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()

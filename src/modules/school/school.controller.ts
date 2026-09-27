@@ -24,6 +24,7 @@ import {
   CreateSchoolPolicyDto,
   CreateTimetableDto,
   CreateWeeklyObjectiveDto,
+  FinancialReportQueryDto,
   ReviewLeaveRequestDto,
   ReviewWeeklyObjectiveDto,
   SubmitHomeworkDto,
@@ -148,7 +149,9 @@ export class SchoolController {
     return { data: await this.schoolService.updateReportCard(id, dto) };
   }
 
-  @RequirePermission("report-cards", "UPDATE")
+  // MANAGE, not UPDATE: a teacher has UPDATE on report-cards (to edit their own draft) but never
+  // MANAGE, so only Admin can reach this route. Decision 7: "admin approves the reports".
+  @RequirePermission("report-cards", "MANAGE")
   @Post("report-cards/:id/publish")
   async publishReportCard(@Param() { id }: ParamDto) {
     return { data: await this.schoolService.publishReportCard(id) };
@@ -400,6 +403,13 @@ export class SchoolController {
   async deleteIncome(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
     await this.schoolService.deleteIncome(id, { userId, role });
     return { message: "Income entry deleted successfully" };
+  }
+
+  // Replaces the placeholder Reports page: P&L, fee collection by month, overdue/defaulters.
+  @RequirePermission("reports", "READ")
+  @Get("reports/financial")
+  async getFinancialReports(@Query() query: FinancialReportQueryDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getFinancialReports(query, { userId, role }) };
   }
 
   @RequirePermission("expenses", "CREATE")

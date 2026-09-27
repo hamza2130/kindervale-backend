@@ -44,6 +44,20 @@ export class CreateFeeDto {
 
 export class UpdateFeeDto extends PartialType(CreateFeeDto) {}
 
+export class FinancialReportQueryDto {
+  @IsOptional()
+  @IsIn(["Kindervale", "Daycare"], { message: "Portal must be Kindervale or Daycare" })
+  portal?: "Kindervale" | "Daycare";
+
+  @IsOptional()
+  @IsDateString()
+  fromDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  toDate?: string;
+}
+
 export class CreateExamDto {
   @IsString()
   @Trim()

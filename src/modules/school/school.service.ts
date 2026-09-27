@@ -118,7 +118,30 @@ export class SchoolService {
 
   async createFee(dto: CreateFeeDto, requestingUser?: { userId: string; role: string }) {
     await this.assertStudentPortalAccess(requestingUser, dto.studentId, "Student not found");
-    return this.insert(feesTable, { ...dto, amount: dto.amount.toString() }, "fee");
+    // Absolute, not portal-scoped: Accountant isn't confined by callerPortal at all, so without
+    // this a daycare child could get a fee invoice from anyone. Daycare is never billed per
+    // child -- payment is a lump sum recorded through the income ledger instead (decision 3).
+    const [student] = await this.databaseService.db
+      .select({ className: studentsTable.className })
+      .from(studentsTable)
+      .where(eq(studentsTable.id, dto.studentId))
+      .limit(1);
+    if (!student) throw new NotFoundException("Student not found");
+    if (classNameToPortal(student.className) === "Daycare") {
+      throw new BadRequestException("Daycare children are not billed per invoice; record the lump-sum payment as income instead.");
+    }
+    return this.insert(
+      feesTable,
+      { ...dto, amount: dto.amount.toString(), dueDate: this.forceDueDateToThe15th(dto.dueDate), issuedAt: new Date() },
+      "fee"
+    );
+  }
+
+  /** Decision 3: a fee is always due the 15th of whatever month it's for -- the day is never
+   *  client-chosen, only the year/month (taken from whatever date the caller sent). */
+  private forceDueDateToThe15th(dateStr: string): string {
+    const [year, month] = dateStr.slice(0, 7).split("-");
+    return `${year}-${month}-15`;
   }
 
   async getFees(requestingUser?: { userId: string; role: string }) {
@@ -137,7 +160,12 @@ export class SchoolService {
 
   async updateFee(id: string, dto: UpdateFeeDto, requestingUser?: { userId: string; role: string }) {
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
-    return this.update(feesTable, id, { ...dto, amount: dto.amount?.toString() }, "Fee");
+    return this.update(
+      feesTable,
+      id,
+      { ...dto, amount: dto.amount?.toString(), dueDate: dto.dueDate ? this.forceDueDateToThe15th(dto.dueDate) : undefined },
+      "Fee"
+    );
   }
 
   async deleteFee(id: string, requestingUser?: { userId: string; role: string }) {
@@ -182,7 +210,11 @@ export class SchoolService {
   }
 
   updateReportCard(id: string, dto: UpdateReportCardDto) {
-    return this.update(reportCardsTable, id, dto, "Report card");
+    // Approval is exclusively through publishReportCard() below (decision 7: "admin approves the
+    // reports") -- status is dropped here so a teacher editing their own draft through the same
+    // form/PATCH can never self-approve by just including it in the body.
+    const { status, ...rest } = dto;
+    return this.update(reportCardsTable, id, rest, "Report card");
   }
 
   publishReportCard(id: string) {
@@ -589,6 +621,97 @@ export class SchoolService {
     const existing = await this.findOne(incomeTable, id, "Income entry");
     assertExactPortalAccess(requestingUser?.role, existing.portal, "Income entry not found");
     return this.delete(incomeTable, id, "Income entry");
+  }
+
+  /**
+   * The three real reports from the QA pass, replacing the placeholder Reports page: a P&L
+   * (fees collected + daycare income, minus expenses), fee collection grouped by the month it was
+   * due, and an overdue/defaulters list. Aggregated in JS over the existing, already-scoped
+   * getFees()/getExpenses()/getIncome() row sets rather than new raw SQL, since none of this can
+   * be exercised against a live database until Neon resets -- a hand-rolled aggregate query with a
+   * typo would only ever surface as a 500 in production, not a type error here.
+   */
+  async getFinancialReports(query: { portal?: SchoolPortal; fromDate?: string; toDate?: string }, requestingUser?: { userId: string; role: string }) {
+    const [feeRows, expenseRows, incomeRows, students] = await Promise.all([
+      this.databaseService.db
+        .select({
+          id: feesTable.id,
+          invoice: feesTable.invoice,
+          studentId: feesTable.studentId,
+          amount: feesTable.amount,
+          dueDate: feesTable.dueDate,
+          status: feesTable.status
+        })
+        .from(feesTable),
+      this.getExpenses(requestingUser),
+      this.getIncome(requestingUser),
+      this.databaseService.db
+        .select({ id: studentsTable.id, name: studentsTable.name, className: studentsTable.className, admissionNo: studentsTable.admissionNo })
+        .from(studentsTable)
+    ]);
+
+    const studentById = new Map(students.map((student) => [student.id, student]));
+    const portalOf = (studentId: string) => classNameToPortal(studentById.get(studentId)?.className);
+
+    const portalFilter = query.portal;
+    const inRange = (dateStr: string) => (!query.fromDate || dateStr >= query.fromDate) && (!query.toDate || dateStr <= query.toDate);
+
+    // Every existing fee row from before decision 3 blocked daycare invoicing entirely is still
+    // included here if one somehow exists -- this report should reflect what's actually in the
+    // ledger, not silently hide a stray row.
+    const fees = feeRows.filter((fee) => inRange(fee.dueDate) && (!portalFilter || portalOf(fee.studentId) === portalFilter));
+    const expenses = expenseRows.filter((expense) => inRange(expense.date) && (!portalFilter || (expense.portal ?? "Kindervale") === portalFilter));
+    const income = incomeRows.filter((entry) => inRange(entry.date) && (!portalFilter || (entry.portal ?? "Daycare") === portalFilter));
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const toNumber = (value: string | null) => Number(value ?? 0);
+
+    const feesCollected = fees.filter((fee) => fee.status === "PAID").reduce((sum, fee) => sum + toNumber(fee.amount), 0);
+    const otherIncome = income.reduce((sum, entry) => sum + toNumber(entry.amount), 0);
+    const totalExpenses = expenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+    const totalRevenue = feesCollected + otherIncome;
+
+    const profitAndLoss = {
+      feesCollected,
+      otherIncome,
+      totalRevenue,
+      totalExpenses,
+      netProfit: totalRevenue - totalExpenses
+    };
+
+    const monthBuckets = new Map<string, { month: string; collected: number; pending: number; overdue: number }>();
+    for (const fee of fees) {
+      const month = fee.dueDate.slice(0, 7);
+      const bucket = monthBuckets.get(month) ?? { month, collected: 0, pending: 0, overdue: 0 };
+      const amount = toNumber(fee.amount);
+      if (fee.status === "PAID") bucket.collected += amount;
+      else if (fee.dueDate < todayIso) bucket.overdue += amount;
+      else bucket.pending += amount;
+      monthBuckets.set(month, bucket);
+    }
+    const feeCollectionByMonth = [...monthBuckets.values()].sort((a, b) => a.month.localeCompare(b.month));
+
+    const overdue = fees
+      .filter((fee) => fee.status !== "PAID" && fee.dueDate < todayIso)
+      .map((fee) => {
+        const student = studentById.get(fee.studentId);
+        const daysOverdue = Math.max(0, Math.round((Date.parse(todayIso) - Date.parse(fee.dueDate)) / 86_400_000));
+        return {
+          feeId: fee.id,
+          invoice: fee.invoice,
+          studentId: fee.studentId,
+          studentName: student?.name ?? "Unknown",
+          admissionNo: student?.admissionNo ?? "",
+          className: student?.className ?? "",
+          amount: toNumber(fee.amount),
+          dueDate: fee.dueDate,
+          status: fee.status,
+          daysOverdue
+        };
+      })
+      .sort((a, b) => b.daysOverdue - a.daysOverdue);
+
+    return { profitAndLoss, feeCollectionByMonth, overdue, generatedAt: new Date().toISOString() };
   }
 
   createFaq(dto: CreateFaqDto) {

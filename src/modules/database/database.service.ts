@@ -221,6 +221,13 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "archived_at" timestamp
       `);
 
+      // "Submission date" on an invoice -- when the Accountant actually sent it (decision 3).
+      // Existing rows default to now() at migration time, same as their own createdAt would have.
+      await this.db.execute(sql`
+        ALTER TABLE "fees"
+          ADD COLUMN IF NOT EXISTS "issued_at" timestamp NOT NULL DEFAULT now()
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);

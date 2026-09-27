@@ -168,7 +168,11 @@ export class AuthService {
         refreshToken,
         user: {
           ...portalUser,
-          username: user.username
+          username: user.username,
+          // Set whenever an Admin/Accountant generates or resets this login's password (see
+          // UserService.createUser/generateLogin) -- the frontend's forced-change screen reads
+          // this to gate every other page until a real password is set.
+          mustChangePassword: user.mustChangePassword
         }
       }
     };
@@ -340,7 +344,7 @@ export class AuthService {
 
     await this.databaseService.db
       .update(usersTable)
-      .set({ password: await this.hashService.hash(dto.newPassword), updatedAt: new Date() })
+      .set({ password: await this.hashService.hash(dto.newPassword), mustChangePassword: false, updatedAt: new Date() })
       .where(eq(usersTable.id, user.id));
 
     await this.revokeAllRefreshTokens(user.id);
@@ -370,6 +374,7 @@ export class AuthService {
         email: usersTable.email,
         role: usersTable.role,
         status: usersTable.status,
+        mustChangePassword: usersTable.mustChangePassword,
         createdAt: usersTable.createdAt,
         updatedAt: usersTable.updatedAt
       })
