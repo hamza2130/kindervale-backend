@@ -149,7 +149,9 @@ export class SchoolController {
     return { data: await this.schoolService.updateReportCard(id, dto) };
   }
 
-  @RequirePermission("report-cards", "UPDATE")
+  // MANAGE, not UPDATE: a teacher has UPDATE on report-cards (to edit their own draft) but never
+  // MANAGE, so only Admin can reach this route. Decision 7: "admin approves the reports".
+  @RequirePermission("report-cards", "MANAGE")
   @Post("report-cards/:id/publish")
   async publishReportCard(@Param() { id }: ParamDto) {
     return { data: await this.schoolService.publishReportCard(id) };

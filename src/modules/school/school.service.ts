@@ -210,7 +210,11 @@ export class SchoolService {
   }
 
   updateReportCard(id: string, dto: UpdateReportCardDto) {
-    return this.update(reportCardsTable, id, dto, "Report card");
+    // Approval is exclusively through publishReportCard() below (decision 7: "admin approves the
+    // reports") -- status is dropped here so a teacher editing their own draft through the same
+    // form/PATCH can never self-approve by just including it in the body.
+    const { status, ...rest } = dto;
+    return this.update(reportCardsTable, id, rest, "Report card");
   }
 
   publishReportCard(id: string) {
