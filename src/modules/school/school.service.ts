@@ -118,7 +118,30 @@ export class SchoolService {
 
   async createFee(dto: CreateFeeDto, requestingUser?: { userId: string; role: string }) {
     await this.assertStudentPortalAccess(requestingUser, dto.studentId, "Student not found");
-    return this.insert(feesTable, { ...dto, amount: dto.amount.toString() }, "fee");
+    // Absolute, not portal-scoped: Accountant isn't confined by callerPortal at all, so without
+    // this a daycare child could get a fee invoice from anyone. Daycare is never billed per
+    // child -- payment is a lump sum recorded through the income ledger instead (decision 3).
+    const [student] = await this.databaseService.db
+      .select({ className: studentsTable.className })
+      .from(studentsTable)
+      .where(eq(studentsTable.id, dto.studentId))
+      .limit(1);
+    if (!student) throw new NotFoundException("Student not found");
+    if (classNameToPortal(student.className) === "Daycare") {
+      throw new BadRequestException("Daycare children are not billed per invoice; record the lump-sum payment as income instead.");
+    }
+    return this.insert(
+      feesTable,
+      { ...dto, amount: dto.amount.toString(), dueDate: this.forceDueDateToThe15th(dto.dueDate), issuedAt: new Date() },
+      "fee"
+    );
+  }
+
+  /** Decision 3: a fee is always due the 15th of whatever month it's for -- the day is never
+   *  client-chosen, only the year/month (taken from whatever date the caller sent). */
+  private forceDueDateToThe15th(dateStr: string): string {
+    const [year, month] = dateStr.slice(0, 7).split("-");
+    return `${year}-${month}-15`;
   }
 
   async getFees(requestingUser?: { userId: string; role: string }) {
@@ -137,7 +160,12 @@ export class SchoolService {
 
   async updateFee(id: string, dto: UpdateFeeDto, requestingUser?: { userId: string; role: string }) {
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
-    return this.update(feesTable, id, { ...dto, amount: dto.amount?.toString() }, "Fee");
+    return this.update(
+      feesTable,
+      id,
+      { ...dto, amount: dto.amount?.toString(), dueDate: dto.dueDate ? this.forceDueDateToThe15th(dto.dueDate) : undefined },
+      "Fee"
+    );
   }
 
   async deleteFee(id: string, requestingUser?: { userId: string; role: string }) {
