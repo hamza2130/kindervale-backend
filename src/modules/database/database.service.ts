@@ -237,6 +237,18 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "void_reason" text
       `);
 
+      // Per-class fee structure (decision 4): the default monthly amount to invoice a class,
+      // used by bulk invoice generation instead of a flat hardcoded figure for every student.
+      await this.db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "fee_structures" (
+          "id" text PRIMARY KEY NOT NULL,
+          "class_name" text NOT NULL UNIQUE,
+          "amount" numeric(10, 2) NOT NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL,
+          "updated_at" timestamp DEFAULT now() NOT NULL
+        )
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);

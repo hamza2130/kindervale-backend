@@ -51,6 +51,19 @@ export class VoidFeeDto {
   reason?: string;
 }
 
+export class CreateFeeStructureDto {
+  @IsString()
+  @Trim()
+  className: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  amount: number;
+}
+
+export class UpdateFeeStructureDto extends PartialType(CreateFeeStructureDto) {}
+
 export class FinancialReportQueryDto {
   @IsOptional()
   @IsIn(["Kindervale", "Daycare"], { message: "Portal must be Kindervale or Daycare" })
