@@ -78,6 +78,7 @@ import {
   UpdateIncomeDto,
   UpdateFaqDto,
   UpdateFeeDto,
+  VoidFeeDto,
   UpdateLeaveRequestDto,
   UpdateNotificationDto,
   UpdateReportCardDto,
@@ -164,6 +165,11 @@ export class SchoolService {
 
   async updateFee(id: string, dto: UpdateFeeDto, requestingUser?: { userId: string; role: string }) {
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
+    // VOID is only ever set through voidFee() below, which also stamps voidedAt/voidReason --
+    // going through the generic PATCH would leave those unset.
+    if (dto.status === "VOID") {
+      throw new BadRequestException("Use POST /fees/:id/void to void an invoice");
+    }
     return this.update(
       feesTable,
       id,
@@ -175,6 +181,19 @@ export class SchoolService {
   async deleteFee(id: string, requestingUser?: { userId: string; role: string }) {
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
     return this.delete(feesTable, id, "Fee");
+  }
+
+  /**
+   * Decision 4's void/credit-note capability: cancels/corrects a wrongly-issued invoice without
+   * deleting it -- the row and its history (any payments already recorded against it) stay, only
+   * status/voidedAt/voidReason change. A voided invoice is excluded from outstanding-balance
+   * totals everywhere that already filters by status !== "PAID" (fee collection reports,
+   * dashboards) since "VOID" is neither "PAID" nor a real amount owed -- those call sites will
+   * need a small follow-up to also exclude VOID explicitly rather than lump it in with pending.
+   */
+  async voidFee(id: string, dto: VoidFeeDto, requestingUser?: { userId: string; role: string }) {
+    await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
+    return this.update(feesTable, id, { status: "VOID", voidedAt: new Date(), voidReason: dto.reason }, "Fee");
   }
 
   createExam(dto: CreateExamDto) {
@@ -676,8 +695,11 @@ export class SchoolService {
 
     // Every existing fee row from before decision 3 blocked daycare invoicing entirely is still
     // included here if one somehow exists -- this report should reflect what's actually in the
-    // ledger, not silently hide a stray row.
-    const fees = feeRows.filter((fee) => inRange(fee.dueDate) && (!portalFilter || portalOf(fee.studentId) === portalFilter));
+    // ledger, not silently hide a stray row. A voided invoice is excluded outright: it's neither
+    // collected, pending nor overdue -- it no longer represents money owed at all.
+    const fees = feeRows.filter(
+      (fee) => fee.status !== "VOID" && inRange(fee.dueDate) && (!portalFilter || portalOf(fee.studentId) === portalFilter)
+    );
     const expenses = expenseRows.filter((expense) => inRange(expense.date) && (!portalFilter || (expense.portal ?? "Kindervale") === portalFilter));
     const income = incomeRows.filter((entry) => inRange(entry.date) && (!portalFilter || (entry.portal ?? "Daycare") === portalFilter));
 

@@ -3,7 +3,12 @@ import usersTable from "models/users";
 import teachersTable, { teacherAttendanceEnum } from "models/teachers";
 import { boolean, date, integer, jsonb, numeric, pgEnum, pgTable, text, time, timestamp, unique } from "drizzle-orm/pg-core";
 
-export const feeStatusEnum = pgEnum("fee_status", ["PAID", "PENDING", "PARTIAL"]);
+// VOID: an issued invoice cancelled/corrected by the Accountant (decision 4's "void/credit-note
+// capability") -- the row stays, same as every other archive-instead-of-delete pattern in this
+// codebase, so a corrected invoice's history is never silently erased. Shared with
+// studentsTable.feeStatus below; nothing ever actually sets a student's own status to VOID, that
+// value is only ever used on a fee row.
+export const feeStatusEnum = pgEnum("fee_status", ["PAID", "PENDING", "PARTIAL", "VOID"]);
 export type FeeStatus = (typeof feeStatusEnum.enumValues)[number];
 
 export const notificationAudienceEnum = pgEnum("notification_audience", [
@@ -131,6 +136,9 @@ export const feesTable = pgTable("fees", {
   // no separate draft/send flow), never client-supplied, so it can't be backdated.
   issuedAt: timestamp().defaultNow().notNull(),
   status: feeStatusEnum().default("PENDING").notNull(),
+  // Set together when an Accountant voids a wrongly-issued or corrected invoice.
+  voidedAt: timestamp(),
+  voidReason: text(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });

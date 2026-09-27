@@ -228,6 +228,15 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "issued_at" timestamp NOT NULL DEFAULT now()
       `);
 
+      // Void/credit-note capability (decision 4): a corrected/cancelled invoice is voided, not
+      // deleted -- the row and its history stay, same as every other archive-not-delete pattern.
+      await this.db.execute(sql`ALTER TYPE "fee_status" ADD VALUE IF NOT EXISTS 'VOID'`);
+      await this.db.execute(sql`
+        ALTER TABLE "fees"
+          ADD COLUMN IF NOT EXISTS "voided_at" timestamp,
+          ADD COLUMN IF NOT EXISTS "void_reason" text
+      `);
+
       this.logger.log("Database migrations applied successfully");
     } catch (error) {
       this.logger.error("Migration failed: " + (error as Error).message);
