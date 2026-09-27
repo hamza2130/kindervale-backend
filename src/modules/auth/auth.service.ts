@@ -292,23 +292,20 @@ export class AuthService {
       throw new UnauthorizedException("Invalid or expired reset OTP");
     }
 
-    const isDemoResetOtp = dto.otp === "0000";
-    const resetTokens = isDemoResetOtp
-      ? []
-      : await this.databaseService.db
-          .select()
-          .from(passwordResetTokensTable)
-          .where(
-            and(
-              eq(passwordResetTokensTable.userId, user.id),
-              isNull(passwordResetTokensTable.usedAt),
-              gt(passwordResetTokensTable.expiresAt, new Date())
-            )
-          )
-          .orderBy(desc(passwordResetTokensTable.createdAt));
+    const resetTokens = await this.databaseService.db
+      .select()
+      .from(passwordResetTokensTable)
+      .where(
+        and(
+          eq(passwordResetTokensTable.userId, user.id),
+          isNull(passwordResetTokensTable.usedAt),
+          gt(passwordResetTokensTable.expiresAt, new Date())
+        )
+      )
+      .orderBy(desc(passwordResetTokensTable.createdAt));
 
-    const token = isDemoResetOtp ? null : await this.findMatchingResetToken(resetTokens, dto.otp);
-    if (!isDemoResetOtp && !token) {
+    const token = await this.findMatchingResetToken(resetTokens, dto.otp);
+    if (!token) {
       throw new UnauthorizedException("Invalid or expired reset OTP");
     }
 

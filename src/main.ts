@@ -20,7 +20,6 @@ const apiRoots = [
   "subjects",
   "attendance",
   "homework",
-  "lesson-plans",
   "homework-submissions",
   "weekly-objectives",
   "roles",
@@ -56,7 +55,11 @@ const apiRoots = [
     }
     next();
   });
-  app.set("trust proxy", "loopback");
+  // "loopback" only trusts X-Forwarded-* from 127.0.0.1, which is wrong behind Render's
+  // load balancer -- every real client then resolves to the same IP, so the rate limiter
+  // (below) puts all users in one shared bucket. Trust exactly one hop (the platform's own
+  // proxy) by default; override via TRUST_PROXY_HOPS if the deployment adds more hops.
+  app.set("trust proxy", process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : 1);
   app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
     app.enableCors({
     origin: [
