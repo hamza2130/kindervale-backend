@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsEmail, IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsEmail, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
 import { Trim } from "common/transformer";
 
 export class CreateParentDto {
@@ -10,6 +10,8 @@ export class CreateParentDto {
 
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name: string;
 
   @IsEmail({}, { message: "Email must be valid" })
@@ -31,6 +33,8 @@ export class UpdateParentDto {
   @IsOptional()
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name?: string;
 
   @IsOptional()

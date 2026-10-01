@@ -34,7 +34,7 @@ import { teacherAttendanceEnum, type TeacherAttendance } from "models/teachers";
 
 // HH:mm, 24-hour clock (matches the "24 hour clock" convention already used elsewhere, e.g. the
 // class-photo expiry window).
-const TIME_HH_MM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+export const TIME_HH_MM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 export class CreateFeeDto {
   @IsString()
@@ -563,23 +563,30 @@ export class CreateDaycareReportDto {
   @IsDateString()
   date: string;
 
+  // C-20/DC-13: these were unbounded free text -- a 20k-character "note" was accepted and
+  // rendered as a single ~117000px-wide line in the parent/admin view. 2000 chars is generous
+  // for a daily report entry while ruling out that kind of accidental/abusive paste.
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: "Meals note is too long (max 2000 characters)" })
   @Trim()
   meals?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: "Nap note is too long (max 2000 characters)" })
   @Trim()
   nap?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: "Activities note is too long (max 2000 characters)" })
   @Trim()
   activities?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: "Notes are too long (max 2000 characters)" })
   @Trim()
   notes?: string;
 
@@ -594,6 +601,7 @@ export class CreateDaycareReportDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000, { message: "Snack note is too long (max 2000 characters)" })
   @Trim()
   snack?: string;
 

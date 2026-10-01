@@ -1,10 +1,12 @@
 import { Type } from "class-transformer";
-import { IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
 import { Trim } from "common/transformer";
 
 export class CreateSubjectDto {
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name: string;
 
   @IsOptional()
@@ -32,6 +34,8 @@ export class UpdateSubjectDto {
   @IsOptional()
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name?: string;
 
   @IsOptional()

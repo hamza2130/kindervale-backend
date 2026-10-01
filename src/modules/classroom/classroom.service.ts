@@ -127,12 +127,21 @@ export class ClassroomService implements OnApplicationBootstrap {
   }
 
   async createSection(dto: CreateSectionDto): Promise<Section> {
-    await this.getClass(dto.classId);
+    const classRoom = await this.getClass(dto.classId);
     await this.ensureSectionAvailable(dto.classId, dto.name);
+    this.assertSectionCapacityFitsClass(dto.capacity, classRoom.capacity);
 
     const [section] = await this.databaseService.db.insert(sectionsTable).values(dto).returning();
     if (!section) throw new ConflictException("Failed to create section");
     return section;
+  }
+
+  // C-20/A12: a section capacity of 50 inside a 10-seat class was accepted -- a section can't
+  // hold more children than the class it belongs to.
+  private assertSectionCapacityFitsClass(sectionCapacity: number | undefined, classCapacity: number) {
+    if (sectionCapacity !== undefined && sectionCapacity > classCapacity) {
+      throw new ConflictException(`Section capacity (${sectionCapacity}) cannot exceed its class's capacity (${classCapacity})`);
+    }
   }
 
   async getSections(query: SectionListQueryDto) {
@@ -149,8 +158,9 @@ export class ClassroomService implements OnApplicationBootstrap {
   async updateSection(id: string, dto: UpdateSectionDto): Promise<Section> {
     const current = await this.getSection(id);
     const classId = dto.classId ?? current.classId;
-    if (dto.classId) await this.getClass(dto.classId);
+    const classRoom = await this.getClass(classId);
     if (dto.name) await this.ensureSectionAvailable(classId, dto.name, id);
+    this.assertSectionCapacityFitsClass(dto.capacity ?? current.capacity ?? undefined, classRoom.capacity);
 
     const [section] = await this.databaseService.db
       .update(sectionsTable)

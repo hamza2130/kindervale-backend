@@ -1,5 +1,5 @@
 import { Transform, Type } from "class-transformer";
-import { IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
 import { Trim } from "common/transformer";
 import { feeStatusEnum, type FeeStatus } from "models/school";
 
@@ -19,12 +19,18 @@ export class CreateStudentDto {
   @Trim()
   parentId?: string;
 
+  // C-20/DC-09/QA-019: Trim() runs before validation, so a whitespace-only "   " becomes "" here
+  // and IsNotEmpty correctly rejects it -- previously accepted and showed up as a blank-name
+  // child in dropdowns.
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name: string;
 
   @IsString({ message: "Class name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Class name cannot be empty" })
   className: string;
 
   @IsOptional()
@@ -83,11 +89,14 @@ export class UpdateStudentDto {
   @IsOptional()
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name?: string;
 
   @IsOptional()
   @IsString({ message: "Class name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Class name cannot be empty" })
   className?: string;
 
   @IsOptional()
