@@ -32,7 +32,27 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
   }
 
   async onApplicationBootstrap() {
-    await this.runMigrations();
+    // A transient connection failure here (a Neon cold-start hiccup right after a free-tier
+    // suspension lifts is the known trigger -- see RoleService's identical retry) used to be
+    // silently swallowed by runMigrations()'s own catch, leaving whichever statements hadn't run
+    // yet missing until the next restart. Every statement is additive (IF NOT EXISTS/ADD VALUE IF
+    // NOT EXISTS) so a partial run is self-healing, not a regression -- unlike permission
+    // reconciliation, there's no delete-then-fail-to-reinsert risk here, so this only needs the
+    // retry, not a transaction wrap (ALTER TYPE ... ADD VALUE also can't be combined with using
+    // that new value in the same transaction, and Neon's pooler can be fussy about multi-statement
+    // DDL transactions -- wrapping ~30 statements in one would trade this failure mode for a
+    // different one).
+    const attempts = 3;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const ok = await this.runMigrations();
+      if (ok) break;
+      if (attempt === attempts) {
+        this.logger.error(`Migrations failed after ${attempts} attempts -- app is starting with a possibly incomplete schema`);
+      } else {
+        this.logger.warn(`Migration attempt ${attempt}/${attempts} failed, retrying`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
     this.resolveMigrations();
   }
 
@@ -48,7 +68,7 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
    * columns/tables from scripts/migrations/20260821_add_engagement_tables.sql
    * without needing shell access to the Render database.
    */
-  private async runMigrations() {
+  private async runMigrations(): Promise<boolean> {
     try {
       await this.db.execute(sql`
         ALTER TABLE "teachers"
@@ -250,8 +270,10 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
       `);
 
       this.logger.log("Database migrations applied successfully");
+      return true;
     } catch (error) {
-      this.logger.error("Migration failed: " + (error as Error).message);
+      this.logger.warn("Migration attempt failed: " + (error as Error).message);
+      return false;
     }
   }
 }
