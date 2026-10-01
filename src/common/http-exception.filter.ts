@@ -13,8 +13,17 @@ interface PgDriverError {
   detail?: string;
 }
 
-function isPgDriverError(error: unknown): error is PgDriverError {
-  return typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string";
+function asPgDriverError(error: unknown): PgDriverError | null {
+  if (typeof error !== "object" || error === null) return null;
+  if (typeof (error as { code?: unknown }).code === "string") return error as PgDriverError;
+  // Drizzle wraps the raw `pg` driver error in `.cause` for queries run through its own
+  // insert/update/delete builders (as opposed to a raw pool query), so the SQLSTATE code
+  // often isn't on the exception itself -- unwrap one level before giving up.
+  const cause = (error as { cause?: unknown }).cause;
+  if (typeof cause === "object" && cause !== null && typeof (cause as { code?: unknown }).code === "string") {
+    return cause as PgDriverError;
+  }
+  return null;
 }
 
 /** Postgres SQLSTATE codes worth turning into a clean 4xx instead of a raw 500. */
@@ -99,12 +108,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       status = HttpStatus.PAYLOAD_TOO_LARGE;
       message = "Request body is too large";
       console.info(`[${status}] ${message}`);
-    } else if (isPgDriverError(exception)) {
-      const mapped = PG_ERROR_MAP[exception.code];
+    } else if (asPgDriverError(exception)) {
+      const pgError = asPgDriverError(exception)!;
+      const mapped = PG_ERROR_MAP[pgError.code];
       if (mapped) {
         status = mapped.status;
-        message = mapped.message(exception);
-        console.info(`[${status}] ${message} (pg code ${exception.code})`);
+        message = mapped.message(pgError);
+        console.info(`[${status}] ${message} (pg code ${pgError.code})`);
       } else {
         console.error("Unhandled pg error:", exception);
       }
