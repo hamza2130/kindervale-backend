@@ -1,6 +1,6 @@
 import { staffAttendanceTable } from "models/school";
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
-import { and, asc, count, desc, eq, gte, inArray, lte, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lte, ne, sql, type SQL } from "drizzle-orm";
 import { expiredClassPhotoSql, isExpiredClassPhoto } from "modules/school/class-photo";
 import {
   assertExactPortalAccess,
@@ -90,7 +90,8 @@ import {
   UpdateReportCardDto,
   UpdateSchoolPolicyDto,
   UpdateTimetableDto,
-  UpsertSettingsDto
+  UpsertSettingsDto,
+  TIME_HH_MM
 } from "modules/school/school.dto";
 
 type TableWithId = typeof parentsTable;
@@ -335,24 +336,36 @@ export class SchoolService {
   }
 
   async createTimetable(dto: CreateTimetableDto) {
-    // Check for time-slot conflict: same class + same day + overlapping time
-    const conflicts = await this.databaseService.db
-      .select({ id: timetablesTable.id })
-      .from(timetablesTable)
-      .where(
-        and(
-          eq(timetablesTable.className, dto.className),
-          eq(timetablesTable.dayOfWeek, dto.dayOfWeek),
-          eq(timetablesTable.startTime, dto.startTime)
-        )
-      )
-      .limit(1);
-    if (conflicts.length > 0) {
-      throw new ConflictException(
-        `Time slot ${dto.startTime} on ${dto.dayOfWeek} is already taken for ${dto.className}`
-      );
-    }
+    if (dto.startTime >= dto.endTime) throw new BadRequestException("startTime must be before endTime");
+    await this.assertNoTimetableOverlap(dto.className, dto.dayOfWeek, dto.startTime, dto.endTime);
     return this.insert(timetablesTable, dto, "timetable");
+  }
+
+  /**
+   * Was an exact-startTime match only (C-20: two periods on the same day that merely overlap --
+   * e.g. an existing 09:00-10:00 and a new 09:30-10:30 -- slipped through because their start
+   * times differ). HH:mm strings compare correctly as plain strings since they're zero-padded.
+   */
+  private async assertNoTimetableOverlap(
+    className: string,
+    dayOfWeek: string,
+    startTime: string,
+    endTime: string,
+    excludeId?: string
+  ) {
+    const where = excludeId
+      ? and(eq(timetablesTable.className, className), eq(timetablesTable.dayOfWeek, dayOfWeek), ne(timetablesTable.id, excludeId))
+      : and(eq(timetablesTable.className, className), eq(timetablesTable.dayOfWeek, dayOfWeek));
+
+    const sameDay = await this.databaseService.db
+      .select({ id: timetablesTable.id, startTime: timetablesTable.startTime, endTime: timetablesTable.endTime })
+      .from(timetablesTable)
+      .where(where);
+
+    const overlap = sameDay.find((row) => row.startTime < endTime && row.endTime > startTime);
+    if (overlap) {
+      throw new ConflictException(`${startTime}-${endTime} on ${dayOfWeek} overlaps an existing period (${overlap.startTime}-${overlap.endTime}) for ${className}`);
+    }
   }
 
   // Gated on "calendar" READ (not a "timetables" module -- there isn't one), which TEACHER
@@ -370,7 +383,14 @@ export class SchoolService {
     return timetable;
   }
 
-  updateTimetable(id: string, dto: UpdateTimetableDto) {
+  async updateTimetable(id: string, dto: UpdateTimetableDto) {
+    const current = await this.findOne(timetablesTable, id, "Timetable");
+    const className = dto.className ?? current.className;
+    const dayOfWeek = dto.dayOfWeek ?? current.dayOfWeek;
+    const startTime = dto.startTime ?? current.startTime;
+    const endTime = dto.endTime ?? current.endTime;
+    if (startTime >= endTime) throw new BadRequestException("startTime must be before endTime");
+    await this.assertNoTimetableOverlap(className, dayOfWeek, startTime, endTime, id);
     return this.update(timetablesTable, id, dto, "Timetable");
   }
 
@@ -890,7 +910,24 @@ export class SchoolService {
     requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }
   ) {
     await this.assertStudentPortalAccess(requestingUser, dto.studentId, "Student not found");
+    this.assertDaycareReportFieldsSane(dto.date, dto.arrival, dto.departure);
     return this.insert(daycareReportsTable, { ...dto, createdBy }, "daycare report");
+  }
+
+  /**
+   * C-20/DC-07/DC-13: the Daily Activity form had zero validation beyond "is it a string" --
+   * a departure time before arrival, or a report dated in the future, saved silently. Arrival/
+   * departure stay free text everywhere else in the app (one entry point is a plain textbox, not
+   * a <input type="time">), so the cross-field check only fires when both values happen to already
+   * be HH:mm -- it tightens the one reported case without rejecting freeform entries elsewhere.
+   */
+  private assertDaycareReportFieldsSane(date?: string, arrival?: string, departure?: string) {
+    if (date && date.slice(0, 10) > new Date().toISOString().slice(0, 10)) {
+      throw new BadRequestException("Daily activity date cannot be in the future");
+    }
+    if (arrival && departure && TIME_HH_MM.test(arrival) && TIME_HH_MM.test(departure) && arrival >= departure) {
+      throw new BadRequestException("Arrival time must be before departure time");
+    }
   }
 
   async getDaycareReports(
@@ -919,6 +956,12 @@ export class SchoolService {
     requestingUser?: { userId: string; role: string; portal?: SchoolPortal | null }
   ) {
     await this.assertExistingRowPortalAccess(daycareReportsTable, id, requestingUser, "Daycare report not found");
+    const current = await this.findOne(daycareReportsTable, id, "Daycare report");
+    this.assertDaycareReportFieldsSane(
+      dto.date ?? current.date,
+      dto.arrival ?? current.arrival ?? undefined,
+      dto.departure ?? current.departure ?? undefined
+    );
     return this.update(daycareReportsTable, id, dto, "Daycare report");
   }
 

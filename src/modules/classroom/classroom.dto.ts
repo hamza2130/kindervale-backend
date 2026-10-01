@@ -1,10 +1,19 @@
 import { Type } from "class-transformer";
-import { IsIn, IsInt, IsOptional, IsString, Max, Min } from "class-validator";
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from "class-validator";
 import { Trim } from "common/transformer";
 
+// C-20/A12: class capacity 99999 and a section capacity of 50 inside a 10-seat class were both
+// accepted. This bounds a single class/section to a sane preschool size; the class<->section
+// cross-check lives in classroom.service.ts since it needs to read the parent class's capacity.
+const MAX_CAPACITY = 500;
+
 export class CreateClassDto {
+  // C-20/QA-019: Trim() runs before validation, so a whitespace-only name becomes "" and
+  // IsNotEmpty correctly rejects it.
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name: string;
 
   @IsString({ message: "Teacher must be a string" })
@@ -28,6 +37,7 @@ export class CreateClassDto {
   @Type(() => Number)
   @IsInt({ message: "Capacity must be an integer" })
   @Min(1, { message: "Capacity must be at least 1" })
+  @Max(MAX_CAPACITY, { message: `Capacity cannot exceed ${MAX_CAPACITY}` })
   capacity: number;
 }
 
@@ -35,6 +45,8 @@ export class UpdateClassDto {
   @IsOptional()
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name?: string;
 
   @IsOptional()
@@ -60,6 +72,7 @@ export class UpdateClassDto {
   @Type(() => Number)
   @IsInt({ message: "Capacity must be an integer" })
   @Min(1, { message: "Capacity must be at least 1" })
+  @Max(MAX_CAPACITY, { message: `Capacity cannot exceed ${MAX_CAPACITY}` })
   capacity?: number;
 }
 
@@ -105,12 +118,15 @@ export class CreateSectionDto {
 
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: "Capacity must be an integer" })
   @Min(1, { message: "Capacity must be at least 1" })
+  @Max(MAX_CAPACITY, { message: `Capacity cannot exceed ${MAX_CAPACITY}` })
   capacity?: number;
 }
 
@@ -123,12 +139,15 @@ export class UpdateSectionDto {
   @IsOptional()
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name?: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: "Capacity must be an integer" })
   @Min(1, { message: "Capacity must be at least 1" })
+  @Max(MAX_CAPACITY, { message: `Capacity cannot exceed ${MAX_CAPACITY}` })
   capacity?: number;
 }
 

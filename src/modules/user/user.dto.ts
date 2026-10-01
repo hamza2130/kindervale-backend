@@ -1,5 +1,5 @@
 import { Transform, Type } from "class-transformer";
-import { IsEmail, IsEnum, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min, MinLength } from "class-validator";
+import { IsEmail, IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from "class-validator";
 import { normalizeUserRole } from "common/role-normalizer";
 import { Trim } from "common/transformer";
 import { userRoleEnum, userStatusEnum, type UserRole, type UserStatus } from "models/users";
@@ -8,6 +8,7 @@ export class CreateUserDto {
   @IsString({ message: "Name must be a string" })
   @Matches(/^[\p{L}][\p{L}\s'-]*$/u, { message: "Name can only contain letters, spaces, apostrophes and hyphens" })
   @Trim()
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name: string;
 
   @IsString({ message: "Username must be a string" })
@@ -39,6 +40,7 @@ export class UpdateUserDto {
   @IsString({ message: "Name must be a string" })
   @Matches(/^[\p{L}][\p{L}\s'-]*$/u, { message: "Name can only contain letters, spaces, apostrophes and hyphens" })
   @Trim()
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name?: string;
 
   @IsOptional()
@@ -117,6 +119,8 @@ export class UserListQueryDto {
 export class GenerateLoginDto {
   @IsString({ message: "Name must be a string" })
   @Trim()
+  @IsNotEmpty({ message: "Name cannot be empty" })
+  @MaxLength(100, { message: "Name is too long (max 100 characters)" })
   name: string;
 
   @IsIn(["Teacher", "Parent"], { message: "Role must be Teacher or Parent" })
