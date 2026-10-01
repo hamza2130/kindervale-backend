@@ -185,12 +185,27 @@ export class RoleService implements OnApplicationBootstrap {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async onApplicationBootstrap() {
-    try {
-      await this.databaseService.whenReady();
-      const result = await this.seedDefaults();
-      this.logger.log(`Permissions seeded: ${result.roles} roles, ${result.permissions} permissions`);
-    } catch (error) {
-      this.logger.warn("Permission seed skipped: " + (error as Error).message);
+    await this.databaseService.whenReady();
+    // Every grant a role has comes from this table -- if seeding never completes, nobody (not even
+    // Admin) can do anything until the next restart. A single transient failure here (a Neon
+    // cold-start connection hiccup right after a free-tier suspension lifts is the known trigger)
+    // is very likely to succeed on a quick retry, so this is worth a couple of attempts before
+    // giving up and leaving the app to start with whatever role_permissions already has.
+    const attempts = 3;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const result = await this.seedDefaults();
+        this.logger.log(`Permissions seeded: ${result.roles} roles, ${result.permissions} permissions`);
+        return;
+      } catch (error) {
+        const message = (error as Error).message;
+        if (attempt === attempts) {
+          this.logger.error(`Permission seed failed after ${attempts} attempts, app is starting with stale/incomplete permissions: ${message}`);
+        } else {
+          this.logger.warn(`Permission seed attempt ${attempt}/${attempts} failed, retrying: ${message}`);
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
     }
   }
 
@@ -395,35 +410,46 @@ export class RoleService implements OnApplicationBootstrap {
     // assignPermissions() through the admin UI will no longer survive a restart for any role --
     // that trade-off is accepted here in exchange for defaultRoleAccess actually being the source
     // of truth everywhere, not just for two roles.
+    // Reconciling a role is a delete-then-insert pair of separate round-trips. Previously these ran
+    // unguarded, one role after another -- if the connection dropped (or any single query failed,
+    // e.g. during a Neon cold-start right after a free-tier suspension lifts) between a role's
+    // DELETE and its INSERT, that role was left with its old grants wiped and the new ones never
+    // written: effectively zero permissions until the next successful boot. ADMIN or DAYCAREADMIN
+    // hitting that window looks exactly like "the admin account can't do anything." Wrapping the
+    // whole reconciliation in one transaction makes a failure anywhere roll back everything, so a
+    // bad boot leaves role_permissions exactly as it was (old-but-complete) instead of partially
+    // mutated (new-but-incomplete).
     const reconciledRoles: UserRole[] = [...userRoleEnum.enumValues];
-    for (const role of roles) {
-      if (!reconciledRoles.includes(role.name)) continue;
-      const roleAccess = defaultRoleAccess[role.name];
-      const desiredPermissionIds = new Set(
-        Object.entries(roleAccess).flatMap(([module, actions]) =>
-          permissions.filter((permission) => permission.module === module && actions.includes(permission.action)).map((p) => p.id)
-        )
-      );
+    await this.databaseService.db.transaction(async (tx) => {
+      for (const role of roles) {
+        if (!reconciledRoles.includes(role.name)) continue;
+        const roleAccess = defaultRoleAccess[role.name];
+        const desiredPermissionIds = new Set(
+          Object.entries(roleAccess).flatMap(([module, actions]) =>
+            permissions.filter((permission) => permission.module === module && actions.includes(permission.action)).map((p) => p.id)
+          )
+        );
 
-      const currentGrants = await this.databaseService.db
-        .select({ id: rolePermissionsTable.id, permissionId: rolePermissionsTable.permissionId })
-        .from(rolePermissionsTable)
-        .where(eq(rolePermissionsTable.roleId, role.id));
+        const currentGrants = await tx
+          .select({ id: rolePermissionsTable.id, permissionId: rolePermissionsTable.permissionId })
+          .from(rolePermissionsTable)
+          .where(eq(rolePermissionsTable.roleId, role.id));
 
-      const staleGrantIds = currentGrants.filter((grant) => !desiredPermissionIds.has(grant.permissionId)).map((grant) => grant.id);
-      if (staleGrantIds.length) {
-        await this.databaseService.db.delete(rolePermissionsTable).where(inArray(rolePermissionsTable.id, staleGrantIds));
+        const staleGrantIds = currentGrants.filter((grant) => !desiredPermissionIds.has(grant.permissionId)).map((grant) => grant.id);
+        if (staleGrantIds.length) {
+          await tx.delete(rolePermissionsTable).where(inArray(rolePermissionsTable.id, staleGrantIds));
+        }
+
+        const alreadyGranted = new Set(currentGrants.map((grant) => grant.permissionId));
+        const missing = [...desiredPermissionIds].filter((id) => !alreadyGranted.has(id));
+        if (missing.length) {
+          await tx
+            .insert(rolePermissionsTable)
+            .values(missing.map((permissionId) => ({ roleId: role.id, permissionId })))
+            .onConflictDoNothing();
+        }
       }
-
-      const alreadyGranted = new Set(currentGrants.map((grant) => grant.permissionId));
-      const missing = [...desiredPermissionIds].filter((id) => !alreadyGranted.has(id));
-      if (missing.length) {
-        await this.databaseService.db
-          .insert(rolePermissionsTable)
-          .values(missing.map((permissionId) => ({ roleId: role.id, permissionId })))
-          .onConflictDoNothing();
-      }
-    }
+    });
 
     for (const role of roles) {
       if (reconciledRoles.includes(role.name)) continue;
