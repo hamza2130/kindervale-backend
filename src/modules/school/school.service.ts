@@ -442,13 +442,40 @@ export class SchoolService {
     );
   }
 
+  /**
+   * This was the actual cause of the Neon network-transfer outage: `fileUrl` stores a document's
+   * entire content as a base64 data: URI, and this list endpoint returned it for every row, on
+   * every portal sync, for every logged-in user. Measured live: 13 documents, 13.8MB total,
+   * because one "Admission Form" PDF alone is ~10.8MB -- resent in full on every single sync
+   * regardless of whether anyone was looking at it.
+   *
+   * Only PHOTO rows actually need their bytes here (class photos render inline as <img> in a
+   * grid). Everything else -- admission forms, policies, book lists, teacher PDFs, yearly plans --
+   * is opened on demand via the existing GET /documents/:id/download instead, so this computes
+   * the CASE in Postgres itself: the large column's bytes never leave the database for a non-PHOTO
+   * row, rather than being fetched here and only discarded afterwards.
+   */
   getDocuments(query: { type?: string; uploadedBy?: string } = {}) {
     const conditions: SQL[] = [];
     if (query.type) conditions.push(eq(documentsTable.type, query.type as any));
     if (query.uploadedBy) conditions.push(eq(documentsTable.uploadedBy, query.uploadedBy));
     // Expired class photos are hidden even if the hourly cleanup hasn't removed them yet.
     conditions.push(sql`not (${expiredClassPhotoSql()})`);
-    return this.databaseService.db.select().from(documentsTable).where(and(...conditions));
+    return this.databaseService.db
+      .select({
+        id: documentsTable.id,
+        title: documentsTable.title,
+        description: documentsTable.description,
+        type: documentsTable.type,
+        fileUrl: sql<string | null>`case when ${documentsTable.type} = 'PHOTO' then ${documentsTable.fileUrl} else null end`,
+        audience: documentsTable.audience,
+        studentId: documentsTable.studentId,
+        uploadedBy: documentsTable.uploadedBy,
+        createdAt: documentsTable.createdAt,
+        updatedAt: documentsTable.updatedAt
+      })
+      .from(documentsTable)
+      .where(and(...conditions));
   }
 
   getDocument(id: string) {
