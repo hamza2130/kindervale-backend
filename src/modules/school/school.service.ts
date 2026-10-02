@@ -108,7 +108,10 @@ export class SchoolService {
       this.getNotifications()
     ]);
 
-    const pendingFees = fees.filter((fee) => fee.status !== "PAID").reduce((sum, fee) => sum + Number(fee.amount), 0);
+    // voidFee()'s own comment flags this as exactly the follow-up it needed: a voided invoice
+    // isn't PAID, but it's also not real money owed -- lumping it in with pending overstated this
+    // "Outstanding Fees" dashboard stat by the full amount of every voided invoice.
+    const pendingFees = fees.filter((fee) => fee.status !== "PAID" && fee.status !== "VOID").reduce((sum, fee) => sum + Number(fee.amount), 0);
     const attendance = students.length
       ? Math.round(students.reduce((sum, student) => sum + student.attendance, 0) / students.length)
       : 0;
