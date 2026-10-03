@@ -35,6 +35,7 @@ import {
   feesTable,
   feeStructuresTable,
   type FeeStructure,
+  type FeeStatus,
   leaveRequestsTable,
   notificationsTable,
   parentsTable,
@@ -145,11 +146,36 @@ export class SchoolService {
     if (classNameToPortal(student.className) === "Daycare") {
       throw new BadRequestException("Daycare children are not billed per invoice; record the lump-sum payment as income instead.");
     }
-    return this.insert(
+    const fee = await this.insert(
       feesTable,
       { ...dto, amount: dto.amount.toString(), dueDate: this.forceDueDateToThe15th(dto.dueDate), issuedAt: new Date() },
       "fee"
     );
+    await this.syncStudentFeeStatus(dto.studentId);
+    return fee;
+  }
+
+  /**
+   * studentsTable.feeStatus ("Paid"/"Due" badges everywhere) used to be set once at student
+   * creation and never touched again, so it always read "Due" no matter what was actually paid --
+   * confirmed: it's only ever written by the student create/update DTO and the demo seeder.
+   * Recomputed from the student's own real fee rows after every create/update/void/delete so it
+   * stays accurate. VOID rows don't count toward either "owed" or "paid".
+   */
+  private async syncStudentFeeStatus(studentId: string) {
+    const rows = await this.databaseService.db
+      .select({ status: feesTable.status })
+      .from(feesTable)
+      .where(eq(feesTable.studentId, studentId));
+    const relevant = rows.filter((row) => row.status !== "VOID");
+    const feeStatus: FeeStatus = !relevant.length
+      ? "PENDING"
+      : relevant.every((row) => row.status === "PAID")
+        ? "PAID"
+        : relevant.some((row) => row.status === "PAID" || row.status === "PARTIAL")
+          ? "PARTIAL"
+          : "PENDING";
+    await this.databaseService.db.update(studentsTable).set({ feeStatus, updatedAt: new Date() }).where(eq(studentsTable.id, studentId));
   }
 
   /** Decision 3: a fee is always due the 15th of whatever month it's for -- the day is never
@@ -174,23 +200,29 @@ export class SchoolService {
   }
 
   async updateFee(id: string, dto: UpdateFeeDto, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(feesTable, id, "Fee");
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
     // VOID is only ever set through voidFee() below, which also stamps voidedAt/voidReason --
     // going through the generic PATCH would leave those unset.
     if (dto.status === "VOID") {
       throw new BadRequestException("Use POST /fees/:id/void to void an invoice");
     }
-    return this.update(
+    const fee = await this.update(
       feesTable,
       id,
       { ...dto, amount: dto.amount?.toString(), dueDate: dto.dueDate ? this.forceDueDateToThe15th(dto.dueDate) : undefined },
       "Fee"
     );
+    await this.syncStudentFeeStatus(existing.studentId);
+    return fee;
   }
 
   async deleteFee(id: string, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(feesTable, id, "Fee");
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
-    return this.delete(feesTable, id, "Fee");
+    const result = await this.delete(feesTable, id, "Fee");
+    await this.syncStudentFeeStatus(existing.studentId);
+    return result;
   }
 
   /**
@@ -202,8 +234,11 @@ export class SchoolService {
    * need a small follow-up to also exclude VOID explicitly rather than lump it in with pending.
    */
   async voidFee(id: string, dto: VoidFeeDto, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(feesTable, id, "Fee");
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
-    return this.update(feesTable, id, { status: "VOID", voidedAt: new Date(), voidReason: dto.reason }, "Fee");
+    const fee = await this.update(feesTable, id, { status: "VOID", voidedAt: new Date(), voidReason: dto.reason }, "Fee");
+    await this.syncStudentFeeStatus(existing.studentId);
+    return fee;
   }
 
   /**
@@ -318,23 +353,88 @@ export class SchoolService {
     return this.delete(reportCardsTable, id, "Report card");
   }
 
-  createCalendarEvent(dto: CreateCalendarEventDto) {
-    return this.insert(calendarEventsTable, dto, "calendar event");
+  /**
+   * Calendar events/notices add a third option beyond the usual single-portal confinement:
+   * "Both" (e.g. a school-wide closure). A confined caller (Admin/Daycare Admin) may only pick
+   * their own portal or "Both" -- never claim the other portal -- same posture as
+   * assertPortalForCreate, but allowing the shared case instead of rejecting it outright.
+   */
+  private resolveEventPortal(
+    requestingUser: { role: string } | undefined,
+    requestedPortal: string | undefined
+  ): "Kindervale" | "Daycare" | "Both" {
+    const confined = callerPortal(requestingUser?.role);
+    if (!confined) return (requestedPortal as "Kindervale" | "Daycare" | "Both" | undefined) ?? "Both";
+    return requestedPortal === "Both" ? "Both" : confined;
   }
 
-  getCalendarEvents() {
-    return this.databaseService.db.select().from(calendarEventsTable);
+  /** "Both"-portal events/notices are visible to everyone; otherwise same posture as assertExactPortalAccess. */
+  private assertEventPortalAccess(requestingUser: { role: string } | undefined, recordPortal: string, notFoundMessage: string) {
+    const required = callerPortal(requestingUser?.role);
+    if (!required || recordPortal === "Both") return;
+    if (recordPortal !== required) throw new NotFoundException(notFoundMessage);
   }
 
-  getCalendarEvent(id: string) {
-    return this.findOne(calendarEventsTable, id, "Calendar event");
+  /**
+   * Which portals a *viewer* should see events/notices from -- null means unrestricted (Principal,
+   * Accountant, or anyone we can't resolve a portal for). Unlike resolveEventPortal (single portal,
+   * for the writer), a Parent can have children in both portals at once, so this returns a set.
+   * Teacher's portal comes from PermissionGuard (attached to the request as `portal`), same value
+   * assertHomeroomAccess etc. already rely on -- not re-derived here.
+   */
+  private async resolveAllowedPortals(
+    requestingUser?: { userId: string; role: string; portal?: string | null }
+  ): Promise<Array<"Kindervale" | "Daycare"> | null> {
+    const normalizedRole = (requestingUser?.role ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "");
+    if (normalizedRole === "ADMIN") return ["Kindervale"];
+    if (normalizedRole === "DAYCAREADMIN") return ["Daycare"];
+    if (normalizedRole === "TEACHER") {
+      return requestingUser?.portal ? [requestingUser.portal as "Kindervale" | "Daycare"] : null;
+    }
+    if (normalizedRole === "PARENT" && requestingUser?.userId) {
+      const [parent] = await this.databaseService.db
+        .select({ id: parentsTable.id })
+        .from(parentsTable)
+        .where(eq(parentsTable.userId, requestingUser.userId))
+        .limit(1);
+      if (!parent) return null;
+      const children = await this.databaseService.db
+        .select({ className: studentsTable.className })
+        .from(studentsTable)
+        .where(eq(studentsTable.parentId, parent.id));
+      if (!children.length) return null;
+      return Array.from(new Set(children.map((child) => classNameToPortal(child.className))));
+    }
+    return null;
   }
 
-  updateCalendarEvent(id: string, dto: UpdateCalendarEventDto) {
-    return this.update(calendarEventsTable, id, dto, "Calendar event");
+  createCalendarEvent(dto: CreateCalendarEventDto, requestingUser?: { userId: string; role: string }) {
+    const portal = this.resolveEventPortal(requestingUser, dto.portal);
+    return this.insert(calendarEventsTable, { ...dto, portal }, "calendar event");
   }
 
-  deleteCalendarEvent(id: string) {
+  async getCalendarEvents(requestingUser?: { userId: string; role: string; portal?: string | null }) {
+    const rows = await this.databaseService.db.select().from(calendarEventsTable);
+    const allowed = await this.resolveAllowedPortals(requestingUser);
+    return allowed ? rows.filter((row) => row.portal === "Both" || allowed.includes(row.portal as "Kindervale" | "Daycare")) : rows;
+  }
+
+  async getCalendarEvent(id: string, requestingUser?: { userId: string; role: string }) {
+    const event = await this.findOne(calendarEventsTable, id, "Calendar event");
+    this.assertEventPortalAccess(requestingUser, event.portal, "Calendar event not found");
+    return event;
+  }
+
+  async updateCalendarEvent(id: string, dto: UpdateCalendarEventDto, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(calendarEventsTable, id, "Calendar event");
+    this.assertEventPortalAccess(requestingUser, existing.portal, "Calendar event not found");
+    const portal = dto.portal !== undefined ? this.resolveEventPortal(requestingUser, dto.portal) : undefined;
+    return this.update(calendarEventsTable, id, { ...dto, ...(portal ? { portal } : {}) }, "Calendar event");
+  }
+
+  async deleteCalendarEvent(id: string, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(calendarEventsTable, id, "Calendar event");
+    this.assertEventPortalAccess(requestingUser, existing.portal, "Calendar event not found");
     return this.delete(calendarEventsTable, id, "Calendar event");
   }
 
@@ -1005,23 +1105,33 @@ export class SchoolService {
     return this.findOne(backupsTable, id, "Backup");
   }
 
-  createNotification(dto: CreateNotificationDto) {
-    return this.insert(notificationsTable, dto, "notification");
+  createNotification(dto: CreateNotificationDto, requestingUser?: { userId: string; role: string }) {
+    const portal = this.resolveEventPortal(requestingUser, dto.portal);
+    return this.insert(notificationsTable, { ...dto, portal }, "notification");
   }
 
-  getNotifications() {
-    return this.databaseService.db.select().from(notificationsTable);
+  async getNotifications(requestingUser?: { userId: string; role: string; portal?: string | null }) {
+    const rows = await this.databaseService.db.select().from(notificationsTable);
+    const allowed = await this.resolveAllowedPortals(requestingUser);
+    return allowed ? rows.filter((row) => row.portal === "Both" || allowed.includes(row.portal as "Kindervale" | "Daycare")) : rows;
   }
 
-  getNotification(id: string) {
-    return this.findOne(notificationsTable, id, "Notification");
+  async getNotification(id: string, requestingUser?: { userId: string; role: string }) {
+    const notification = await this.findOne(notificationsTable, id, "Notification");
+    this.assertEventPortalAccess(requestingUser, notification.portal, "Notification not found");
+    return notification;
   }
 
-  updateNotification(id: string, dto: UpdateNotificationDto) {
-    return this.update(notificationsTable, id, dto, "Notification");
+  async updateNotification(id: string, dto: UpdateNotificationDto, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(notificationsTable, id, "Notification");
+    this.assertEventPortalAccess(requestingUser, existing.portal, "Notification not found");
+    const portal = dto.portal !== undefined ? this.resolveEventPortal(requestingUser, dto.portal) : undefined;
+    return this.update(notificationsTable, id, { ...dto, ...(portal ? { portal } : {}) }, "Notification");
   }
 
-  deleteNotification(id: string) {
+  async deleteNotification(id: string, requestingUser?: { userId: string; role: string }) {
+    const existing = await this.findOne(notificationsTable, id, "Notification");
+    this.assertEventPortalAccess(requestingUser, existing.portal, "Notification not found");
     return this.delete(notificationsTable, id, "Notification");
   }
 
@@ -1073,8 +1183,8 @@ export class SchoolService {
 
   // ---------------------------------------------------------------- notification read state
   /** Notifications carry an audience, so read state has to be tracked per person. */
-  async getNotificationsForUser(userId?: string) {
-    const notifications = await this.getNotifications();
+  async getNotificationsForUser(userId?: string, requestingUser?: { userId: string; role: string; portal?: string | null }) {
+    const notifications = await this.getNotifications(requestingUser);
     if (!userId) return notifications.map((notification) => ({ ...notification, read: false }));
 
     const reads = await this.databaseService.db
@@ -1094,8 +1204,8 @@ export class SchoolService {
     return { read: true };
   }
 
-  async markAllNotificationsRead(userId: string) {
-    const notifications = await this.getNotifications();
+  async markAllNotificationsRead(userId: string, requestingUser?: { userId: string; role: string; portal?: string | null }) {
+    const notifications = await this.getNotifications(requestingUser);
     if (!notifications.length) return { read: 0 };
     await this.databaseService.db
       .insert(notificationReadsTable)

@@ -29,11 +29,16 @@ export class ClassroomService implements OnApplicationBootstrap {
   async onApplicationBootstrap() {
     try {
       await this.databaseService.whenReady();
+      // Used to insert each default by name with onConflictDoNothing() on every boot -- that
+      // only stops a class from being duplicated, it doesn't stop one from coming BACK. An admin
+      // deleting "Grade 2" removed the conflicting row, so the next restart recreated it right
+      // under them. Only seeds when the table is genuinely empty (first boot), same posture as
+      // DemoDataService -- any existing classes, even a partial or fully-customized set, are left
+      // alone.
+      const [{ total }] = await this.databaseService.db.select({ total: count() }).from(classesTable);
+      if (total > 0) return;
       for (const name of ClassroomService.DEFAULT_CLASSES) {
-        await this.databaseService.db
-          .insert(classesTable)
-          .values({ name, teacher: "", capacity: 30 })
-          .onConflictDoNothing();
+        await this.databaseService.db.insert(classesTable).values({ name, teacher: "", capacity: 30 }).onConflictDoNothing();
       }
       this.logger.log(`Default classes seeded (${ClassroomService.DEFAULT_CLASSES.length})`);
     } catch (error) {

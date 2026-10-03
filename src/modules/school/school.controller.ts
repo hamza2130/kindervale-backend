@@ -227,32 +227,37 @@ export class SchoolController {
 
   @RequirePermission("calendar", "CREATE")
   @Post("calendar-events")
-  async createCalendarEvent(@Body() dto: CreateCalendarEventDto) {
-    return { data: await this.schoolService.createCalendarEvent(dto) };
+  async createCalendarEvent(@Body() dto: CreateCalendarEventDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.createCalendarEvent(dto, { userId, role }) };
   }
 
   @RequirePermission("calendar", "READ")
   @Get("calendar-events")
-  async getCalendarEvents() {
-    return { data: await this.schoolService.getCalendarEvents() };
+  async getCalendarEvents(@User("userId") userId: string, @User("role") role: string, @User("portal") portal: string) {
+    return { data: await this.schoolService.getCalendarEvents({ userId, role, portal }) };
   }
 
   @RequirePermission("calendar", "READ")
   @Get("calendar-events/:id")
-  async getCalendarEvent(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getCalendarEvent(id) };
+  async getCalendarEvent(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getCalendarEvent(id, { userId, role }) };
   }
 
   @RequirePermission("calendar", "UPDATE")
   @Patch("calendar-events/:id")
-  async updateCalendarEvent(@Param() { id }: ParamDto, @Body() dto: UpdateCalendarEventDto) {
-    return { data: await this.schoolService.updateCalendarEvent(id, dto) };
+  async updateCalendarEvent(
+    @Param() { id }: ParamDto,
+    @Body() dto: UpdateCalendarEventDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.updateCalendarEvent(id, dto, { userId, role }) };
   }
 
   @RequirePermission("calendar", "DELETE")
   @Delete("calendar-events/:id")
-  async deleteCalendarEvent(@Param() { id }: ParamDto) {
-    await this.schoolService.deleteCalendarEvent(id);
+  async deleteCalendarEvent(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    await this.schoolService.deleteCalendarEvent(id, { userId, role });
     return { message: "Calendar event deleted successfully" };
   }
 
@@ -680,21 +685,21 @@ export class SchoolController {
 
   @RequirePermission("notices", "CREATE")
   @Post("notifications")
-  async createNotification(@Body() dto: CreateNotificationDto) {
-    return { data: await this.schoolService.createNotification(dto) };
+  async createNotification(@Body() dto: CreateNotificationDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.createNotification(dto, { userId, role }) };
   }
 
   @RequirePermission("notices", "READ")
   @Get("notifications")
-  async getNotifications(@User("userId") userId: string) {
-    return { data: await this.schoolService.getNotificationsForUser(userId) };
+  async getNotifications(@User("userId") userId: string, @User("role") role: string, @User("portal") portal: string) {
+    return { data: await this.schoolService.getNotificationsForUser(userId, { userId, role, portal }) };
   }
 
   // Marking as read only ever writes the caller's own row, so plain read access is enough.
   @RequirePermission("notices", "READ")
   @Post("notifications/read-all")
-  async markAllNotificationsRead(@User("userId") userId: string) {
-    return { data: await this.schoolService.markAllNotificationsRead(userId) };
+  async markAllNotificationsRead(@User("userId") userId: string, @User("role") role: string, @User("portal") portal: string) {
+    return { data: await this.schoolService.markAllNotificationsRead(userId, { userId, role, portal }) };
   }
 
   @RequirePermission("notices", "READ")
@@ -705,20 +710,25 @@ export class SchoolController {
 
   @RequirePermission("notices", "READ")
   @Get("notifications/:id")
-  async getNotification(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getNotification(id) };
+  async getNotification(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getNotification(id, { userId, role }) };
   }
 
   @RequirePermission("notices", "UPDATE")
   @Patch("notifications/:id")
-  async updateNotification(@Param() { id }: ParamDto, @Body() dto: UpdateNotificationDto) {
-    return { data: await this.schoolService.updateNotification(id, dto) };
+  async updateNotification(
+    @Param() { id }: ParamDto,
+    @Body() dto: UpdateNotificationDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.updateNotification(id, dto, { userId, role }) };
   }
 
   @RequirePermission("notices", "DELETE")
   @Delete("notifications/:id")
-  async deleteNotification(@Param() { id }: ParamDto) {
-    await this.schoolService.deleteNotification(id);
+  async deleteNotification(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    await this.schoolService.deleteNotification(id, { userId, role });
     return { message: "Notification deleted successfully" };
   }
 

@@ -62,6 +62,10 @@ export const studentsTable = pgTable("students", {
   birthday: date(),
   attendance: integer().default(0).notNull(),
   phone: text(),
+  bloodGroup: text(),
+  address: text(),
+  emergencyContactName: text(),
+  emergencyContactPhone: text(),
   feeStatus: feeStatusEnum().default("PENDING").notNull(),
   // Set when a withdrawn/left student is archived (see StudentService.deleteStudent): their row
   // and every table that references studentId (attendance, fees, homework, report cards, ...)
@@ -227,6 +231,9 @@ export const calendarEventsTable = pgTable("calendar_events", {
   title: text().notNull(),
   date: date().notNull(),
   type: text().notNull(),
+  // "Kindervale" | "Daycare" | "Both" -- defaults to "Both" so every existing row (and anything
+  // inserted before this column existed) keeps showing to everyone, matching today's behavior.
+  portal: text().notNull().default("Both"),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });
@@ -456,6 +463,9 @@ export const notificationsTable = pgTable("notifications", {
   body: text().notNull(),
   date: date().notNull(),
   audience: notificationAudienceEnum().default("ALL").notNull(),
+  // Same "Kindervale" | "Daycare" | "Both" convention as calendarEventsTable.portal -- a separate
+  // axis from audience (which is role, not portal). Defaults to "Both" for the same reason.
+  portal: text().notNull().default("Both"),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });
@@ -465,6 +475,12 @@ export const settingsTable = pgTable("settings", {
   schoolName: text().notNull(),
   academicYear: text().notNull(),
   timezone: text().notNull(),
+  // Array of { start, end } (ISO dates), one per TERMS label on the frontend. Editing this in
+  // Settings used to only update an in-memory variable in the legacy script -- real on screen,
+  // gone on the next reload, with nowhere in the schema to actually persist it.
+  termDates: jsonb(),
+  contactEmail: text(),
+  contactPhone: text(),
   createdAt: timestamp().defaultNow().notNull(),
   updatedAt: timestamp().defaultNow().notNull()
 });
