@@ -61,14 +61,27 @@ const apiRoots = [
   // proxy) by default; override via TRUST_PROXY_HOPS if the deployment adds more hops.
   app.set("trust proxy", process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : 1);
   app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-    app.enableCors({
-    origin: [
-      ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : []),
-      "http://localhost:3000",
-      "http://localhost:3001",
-      "http://127.0.0.1:3000",
-      "http://127.0.0.1:3001"
-    ],
+  const allowedOrigins = [
+    ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",") : []),
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001"
+  ];
+  // Vercel hands every branch/PR its own preview URL (kindervaleportal-git-<branch>-<team>.vercel.app),
+  // so a fixed allowlist can't cover a staging frontend without editing this env var on every new
+  // branch. CORS_ORIGIN_PATTERN is an optional regex for that case -- unset in production, where
+  // the fixed CORS_ORIGINS list is still the only thing checked, same as before this change.
+  const corsOriginPattern = process.env.CORS_ORIGIN_PATTERN ? new RegExp(process.env.CORS_ORIGIN_PATTERN) : null;
+  app.enableCors({
+    origin: (origin, callback) => {
+      // No Origin header at all (curl, server-to-server, same-origin) -- always allowed, matching
+      // this app's own prior behavior and every curl-based check used throughout this project.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (corsOriginPattern && corsOriginPattern.test(origin)) return callback(null, true);
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
     credentials: true,
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Accept", "X-Requested-With"]
