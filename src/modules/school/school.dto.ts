@@ -648,12 +648,6 @@ export class CreateDaycareResourceDto {
 
 export class UpdateDaycareResourceDto extends PartialType(CreateDaycareResourceDto) {}
 
-export class CreateBackupDto {
-  @IsString()
-  @Trim()
-  type: string;
-}
-
 export class CreateNotificationDto {
   @IsString()
   @Trim()
