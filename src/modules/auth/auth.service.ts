@@ -54,24 +54,11 @@ export class AuthService {
     const loginId = (dto.email ?? dto.username ?? "").trim();
     const isProduction = process.env.NODE_ENV === "production";
 
-    const requiresOtp = role === "admin" || role === "daycare_admin" || role === "principal";
-    if (requiresOtp) {
-      // The demo code used to be accepted unconditionally *alongside* LOGIN_OTP
-      // (`otp === "0000" || otp === expected`), so configuring a real secret did not switch it
-      // off — the published "0000" stayed valid forever. It is now only the fallback for when
-      // nothing is configured, so setting LOGIN_OTP genuinely replaces it.
-      //
-      // Deliberately not throwing when LOGIN_OTP is unset: this runs against a live school,
-      // and failing closed on a missing variable would lock every admin out on deploy. It
-      // warns instead, and the fallback disappears the moment the variable is set.
-      const expectedLoginOtp = process.env.LOGIN_OTP;
-      if (!expectedLoginOtp && isProduction) {
-        console.warn("[auth] LOGIN_OTP is not set — falling back to the public demo code. Set it.");
-      }
-      if (dto.otp !== (expectedLoginOtp ?? "0000")) {
-        throw new UnauthorizedException("Invalid OTP");
-      }
-    }
+    // Removed: a login OTP step used to be required for admin/daycare_admin/principal, but it
+    // was a single static code shared by every account (LOGIN_OTP, falling back to the public
+    // "0000" if unset) -- not per-user, not time-limited, printed in the login page's own demo
+    // hint text. It added friction without adding real protection, so it's gone rather than kept
+    // as security theater.
 
     // Hands out a valid admin token for any credentials. Useful locally, catastrophic if the
     // variable ever reaches the deployed environment — so it refuses to run there.

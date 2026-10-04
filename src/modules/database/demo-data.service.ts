@@ -19,6 +19,15 @@ export class DemoDataService implements OnApplicationBootstrap {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async onApplicationBootstrap() {
+    // Opt-in only, same posture as DEV_AUTH_BYPASS: this used to run unconditionally on every
+    // boot, filling any empty table (students/fees/expenses/staff-attendance) with invented rows
+    // -- including in production. A free-tier Render cold start counts as a fresh boot, so an
+    // empty-but-real production database would silently get fake data again. Local/staging set
+    // this explicitly in .env; production leaves it unset.
+    if (process.env.ENABLE_DEMO_SEED !== "true") {
+      this.logger.log("Demo data seeding skipped (ENABLE_DEMO_SEED is not set to \"true\")");
+      return;
+    }
     try {
       await this.databaseService.whenReady();
       await this.seedStudents();

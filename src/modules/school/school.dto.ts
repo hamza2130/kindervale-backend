@@ -23,11 +23,13 @@ import {
   feeStatusEnum,
   leaveStatusEnum,
   notificationAudienceEnum,
+  reportTypeEnum,
   reviewStatusEnum,
   type DocumentType,
   type FeeStatus,
   type LeaveStatus,
   type NotificationAudience,
+  type ReportType,
   type ReviewStatus
 } from "models/school";
 import { teacherAttendanceEnum, type TeacherAttendance } from "models/teachers";
@@ -194,6 +196,10 @@ export class CreateReportCardDto {
   @Trim()
   term: string;
 
+  @IsOptional()
+  @IsEnum(reportTypeEnum.enumValues)
+  reportType?: ReportType;
+
   @IsString()
   @Trim()
   className: string;
@@ -230,6 +236,10 @@ export class CreateCalendarEventDto {
   @IsString()
   @Trim()
   type: string;
+
+  @IsOptional()
+  @IsIn(["Kindervale", "Daycare", "Both"], { message: "Portal must be Kindervale, Daycare, or Both" })
+  portal?: "Kindervale" | "Daycare" | "Both";
 }
 
 export class UpdateCalendarEventDto extends PartialType(CreateCalendarEventDto) {}
@@ -658,9 +668,21 @@ export class CreateNotificationDto {
 
   @IsEnum(notificationAudienceEnum.enumValues)
   audience: NotificationAudience;
+
+  @IsOptional()
+  @IsIn(["Kindervale", "Daycare", "Both"], { message: "Portal must be Kindervale, Daycare, or Both" })
+  portal?: "Kindervale" | "Daycare" | "Both";
 }
 
 export class UpdateNotificationDto extends PartialType(CreateNotificationDto) {}
+
+export class TermDateEntryDto {
+  @IsDateString()
+  start: string;
+
+  @IsDateString()
+  end: string;
+}
 
 export class UpsertSettingsDto {
   @IsString()
@@ -674,4 +696,22 @@ export class UpsertSettingsDto {
   @IsString()
   @Trim()
   timezone: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TermDateEntryDto)
+  termDates?: TermDateEntryDto[];
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(200)
+  contactEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(50)
+  contactPhone?: string;
 }

@@ -89,6 +89,13 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     attendance: ["CREATE", "READ", "UPDATE"],
     "daycare-reports": ["MANAGE"],
     "staff-attendance": ["MANAGE"],
+    // Was missing entirely -- Daycare Admin got a 403 on every calendar/notices request, so they
+    // could never see even a "Both"-portal event/notice, let alone post their own. Both routes'
+    // own portal scoping (resolveEventPortal/resolveAllowedPortals in school.service.ts) already
+    // confines what they can post and see to Daycare + Both -- this grant only governs whether
+    // they can call the endpoint at all.
+    calendar: ["MANAGE"],
+    notices: ["MANAGE"],
     // Generate Login, narrowed to parent logins only on the frontend -- teacher accounts are
     // created directly through Admin's staff form now, not a separate generate-login step.
     users: ["CREATE", "READ"],
@@ -157,7 +164,11 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     notices: ["READ"],
     calendar: ["READ"],
     documents: ["CREATE", "READ"],
-    exams: ["READ"]
+    exams: ["READ"],
+    // FAQs/school policies and the general school-info settings (contact details, term dates)
+    // are gated behind "settings" since they're stored in the same place Admin edits them --
+    // read access only, both menus already link to the FAQs & Policies page.
+    settings: ["READ"]
   },
   PARENT: {
     dashboard: ["READ"],
@@ -175,7 +186,8 @@ const defaultRoleAccess: Record<UserRole, Partial<Record<(typeof defaultModules)
     // be able to apply for their child's leave at all.
     documents: ["CREATE", "READ"],
     exams: ["READ"],
-    "daycare-resources": ["READ"]
+    "daycare-resources": ["READ"],
+    settings: ["READ"]
   },
 };
 

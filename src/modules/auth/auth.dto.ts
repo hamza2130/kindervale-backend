@@ -21,14 +21,6 @@ export class LoginDto {
   @MinLength(6, { message: "Password must be at least 6 characters" })
   password: string;
 
-  @ValidateIf((dto: LoginDto) => {
-    const role = normalizePortalRole(dto.role);
-    return role === "admin" || role === "daycare_admin" || role === "principal";
-  })
-  @IsString({ message: "OTP must be a string" })
-  @Length(4, 6, { message: "OTP must be 4 to 6 digits" })
-  otp?: string;
-
   @Transform(({ value }) => normalizePortalRole(value))
   @IsIn(portalRoles, { message: `Role must be one of: ${portalRoles.join(", ")}` })
   role: PortalRole;

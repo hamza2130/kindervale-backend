@@ -64,6 +64,37 @@ export class CreateStudentDto {
   phone?: string;
 
   @IsOptional()
+  @IsString({ message: "Blood group must be a string" })
+  @Trim()
+  @MaxLength(5, { message: "Blood group is too long" })
+  bloodGroup?: string;
+
+  @IsOptional()
+  @IsString({ message: "Address must be a string" })
+  @Trim()
+  @MaxLength(500, { message: "Address is too long (max 500 characters)" })
+  address?: string;
+
+  @IsOptional()
+  @IsString({ message: "Emergency contact name must be a string" })
+  @Trim()
+  @MaxLength(100, { message: "Emergency contact name is too long (max 100 characters)" })
+  emergencyContactName?: string;
+
+  @IsOptional()
+  @IsString({ message: "Emergency contact phone must be a string" })
+  @Trim()
+  @MaxLength(30, { message: "Emergency contact phone is too long (max 30 characters)" })
+  emergencyContactPhone?: string;
+
+  // Source for the circular photo an End-of-Year report card shows (see common/report-template.ts
+  // consumers) -- optional, a student with none gets a plain avatar fallback.
+  @IsOptional()
+  @IsString({ message: "Photo URL must be a string" })
+  @Trim()
+  photoUrl?: string;
+
+  @IsOptional()
   @IsEnum(feeStatusEnum.enumValues, {
     message: `Fee status must be one of: ${feeStatusEnum.enumValues.join(", ")}`
   })
@@ -126,6 +157,35 @@ export class UpdateStudentDto {
   @IsString({ message: "Phone must be a string" })
   @Trim()
   phone?: string;
+
+  @IsOptional()
+  @IsString({ message: "Blood group must be a string" })
+  @Trim()
+  @MaxLength(5, { message: "Blood group is too long" })
+  bloodGroup?: string;
+
+  @IsOptional()
+  @IsString({ message: "Address must be a string" })
+  @Trim()
+  @MaxLength(500, { message: "Address is too long (max 500 characters)" })
+  address?: string;
+
+  @IsOptional()
+  @IsString({ message: "Emergency contact name must be a string" })
+  @Trim()
+  @MaxLength(100, { message: "Emergency contact name is too long (max 100 characters)" })
+  emergencyContactName?: string;
+
+  @IsOptional()
+  @IsString({ message: "Emergency contact phone must be a string" })
+  @Trim()
+  @MaxLength(30, { message: "Emergency contact phone is too long (max 30 characters)" })
+  emergencyContactPhone?: string;
+
+  @IsOptional()
+  @IsString({ message: "Photo URL must be a string" })
+  @Trim()
+  photoUrl?: string;
 
   @IsOptional()
   @IsEnum(feeStatusEnum.enumValues, {

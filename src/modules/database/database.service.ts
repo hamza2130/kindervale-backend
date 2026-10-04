@@ -269,6 +269,58 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
         )
       `);
 
+      // ID-card fields: client feedback was that the printed card showed name + a raw dash for
+      // everything else. These are optional -- admin fills them in whenever, on either portal.
+      await this.db.execute(sql`
+        ALTER TABLE "students"
+          ADD COLUMN IF NOT EXISTS "blood_group" text,
+          ADD COLUMN IF NOT EXISTS "address" text,
+          ADD COLUMN IF NOT EXISTS "emergency_contact_name" text,
+          ADD COLUMN IF NOT EXISTS "emergency_contact_phone" text
+      `);
+
+      // Portal scoping for calendar events/notices: previously neither table had any way to
+      // confine an event/notice to one portal, so a Kindervale-only announcement was visible to
+      // Daycare too (and vice versa) with no way to prevent it. Default "Both" preserves exactly
+      // today's behavior for every existing row.
+      await this.db.execute(sql`
+        ALTER TABLE "calendar_events"
+          ADD COLUMN IF NOT EXISTS "portal" text NOT NULL DEFAULT 'Both'
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE "notifications"
+          ADD COLUMN IF NOT EXISTS "portal" text NOT NULL DEFAULT 'Both'
+      `);
+
+      // Term dates + school contact info: editing either in Settings used to only update an
+      // in-memory variable, gone on the next reload, with no column to actually persist either.
+      await this.db.execute(sql`
+        ALTER TABLE "settings"
+          ADD COLUMN IF NOT EXISTS "term_dates" jsonb,
+          ADD COLUMN IF NOT EXISTS "contact_email" text,
+          ADD COLUMN IF NOT EXISTS "contact_phone" text
+      `);
+
+      // Report-card redesign: a report is either a midterm Progress Check or a Final/End-of-Year
+      // Report, and which label set it renders with (see common/report-template.ts) depends on
+      // this, not on the free-text `term` display string. photoUrl on students backs the circle
+      // photo an End-of-Year report shows (optional -- a student with none gets a plain avatar).
+      await this.db.execute(sql`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'report_type') THEN
+            CREATE TYPE "report_type" AS ENUM ('MIDTERM', 'FINAL');
+          END IF;
+        END $$
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE "report_cards"
+          ADD COLUMN IF NOT EXISTS "report_type" "report_type" NOT NULL DEFAULT 'MIDTERM'
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE "students"
+          ADD COLUMN IF NOT EXISTS "photo_url" text
+      `);
+
       this.logger.log("Database migrations applied successfully");
       return true;
     } catch (error) {
