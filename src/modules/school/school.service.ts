@@ -33,6 +33,7 @@ import {
   incomeTable,
   faqsTable,
   feesTable,
+  feePaymentsTable,
   feeStructuresTable,
   type FeeStructure,
   type FeeStatus,
@@ -81,6 +82,7 @@ import {
   UpdateFaqDto,
   UpdateFeeDto,
   VoidFeeDto,
+  CreateFeePaymentDto,
   CreateFeeStructureDto,
   UpdateFeeStructureDto,
   StaffAttendanceQueryDto,
@@ -186,7 +188,8 @@ export class SchoolService {
 
   async getFees(requestingUser?: { userId: string; role: string }) {
     const rows = await this.databaseService.db.select().from(feesTable);
-    return this.scopeRowsToParent(rows, requestingUser);
+    const scoped = await this.scopeRowsToParent(rows, requestingUser);
+    return this.withPaidAmounts(scoped);
   }
 
   async getFee(id: string, requestingUser?: { userId: string; role: string }) {
@@ -195,7 +198,8 @@ export class SchoolService {
     // can't see this one" response would let a parent confirm which invoice ids exist at all.
     const [scoped] = await this.scopeRowsToParent([fee], requestingUser);
     if (!scoped) throw new NotFoundException("Fee not found");
-    return scoped;
+    const [withPaid] = await this.withPaidAmounts([scoped]);
+    return withPaid;
   }
 
   async updateFee(id: string, dto: UpdateFeeDto, requestingUser?: { userId: string; role: string }) {
@@ -238,6 +242,96 @@ export class SchoolService {
     const fee = await this.update(feesTable, id, { status: "VOID", voidedAt: new Date(), voidReason: dto.reason }, "Fee");
     await this.syncStudentFeeStatus(existing.studentId);
     return fee;
+  }
+
+  /** Gross minus scholarship -- what's actually owed on a fee. Mirrors the frontend's netFee().
+   *  Takes `any` (not a precise Fee type) for the same reason findOne()/update() above do -- this
+   *  runs on whatever loosely-typed row Drizzle's dynamic table selects hand back. */
+  private netFeeAmount(fee: any): number {
+    const gross = Number(fee.amount ?? 0);
+    const scholarshipPct = fee.scholarship ?? 0;
+    return gross - Math.round((gross * scholarshipPct) / 100);
+  }
+
+  /** One query for however many fees are in play, instead of N+1 per fee. */
+  private async sumPaymentsForFees(feeIds: string[]): Promise<Map<string, number>> {
+    if (!feeIds.length) return new Map();
+    const rows = await this.databaseService.db
+      .select({ feeId: feePaymentsTable.feeId, total: sql<string>`sum(${feePaymentsTable.amount})` })
+      .from(feePaymentsTable)
+      .where(inArray(feePaymentsTable.feeId, feeIds))
+      .groupBy(feePaymentsTable.feeId);
+    return new Map(rows.map((row) => [row.feeId, Number(row.total ?? 0)]));
+  }
+
+  /** Attaches paidAmount (sum of recorded payments) to each fee row -- the UI needs the running
+   *  balance, not just the cached status label, to show "Rs X of Rs Y paid". */
+  private async withPaidAmounts(fees: any[]): Promise<any[]> {
+    const paidByFee = await this.sumPaymentsForFees(fees.map((fee) => fee.id));
+    return fees.map((fee) => ({ ...fee, paidAmount: paidByFee.get(fee.id) ?? 0 }));
+  }
+
+  /**
+   * Phase 2 of decision 4: a fee can be paid in installments, not just all-or-nothing. Recording
+   * one here is the only way a fee's status ever becomes PAID or PARTIAL -- nothing else sets
+   * those two values (VOID is voidFee()'s, PENDING is the default). Overpayment is rejected
+   * rather than silently accepted, since "paid more than owed" is virtually always a data-entry
+   * mistake, not a real scenario (there's no credit-balance/refund concept here).
+   */
+  async recordFeePayment(feeId: string, dto: CreateFeePaymentDto, requestingUser?: { userId: string; role: string }) {
+    const fee = await this.findOne(feesTable, feeId, "Fee");
+    await this.assertExistingRowPortalAccess(feesTable, feeId, requestingUser, "Fee not found");
+    if (fee.status === "VOID") throw new BadRequestException("This invoice was voided; it can't receive a payment.");
+
+    const netFee = this.netFeeAmount(fee);
+    const alreadyPaid = (await this.sumPaymentsForFees([feeId])).get(feeId) ?? 0;
+    const roundedAlready = Math.round(alreadyPaid * 100) / 100;
+    const roundedNew = Math.round(dto.amount * 100) / 100;
+    if (roundedAlready + roundedNew > netFee + 0.01) {
+      const remaining = Math.max(0, netFee - roundedAlready);
+      throw new BadRequestException(`Payment of ${roundedNew} exceeds the ${remaining} still owed on this invoice.`);
+    }
+
+    const payment = await this.insert(
+      feePaymentsTable,
+      { feeId, amount: dto.amount.toString(), method: dto.method, note: dto.note, recordedBy: requestingUser?.userId },
+      "fee payment"
+    );
+
+    const totalPaid = roundedAlready + roundedNew;
+    const status: FeeStatus = totalPaid >= netFee ? "PAID" : "PARTIAL";
+    const updatedFee = await this.update(feesTable, feeId, { status }, "Fee");
+    await this.syncStudentFeeStatus(fee.studentId);
+
+    return { payment, fee: { ...updatedFee, paidAmount: totalPaid } };
+  }
+
+  async getFeePayments(feeId: string, requestingUser?: { userId: string; role: string }) {
+    // Reuses getFee()'s own not-found/portal-scoping instead of duplicating it -- a parent (or
+    // anyone else) who can't see the fee itself shouldn't be able to list its payments either.
+    await this.getFee(feeId, requestingUser);
+    return this.databaseService.db.select().from(feePaymentsTable).where(eq(feePaymentsTable.feeId, feeId)).orderBy(desc(feePaymentsTable.paidAt));
+  }
+
+  /** Corrects a mis-entered payment. Recomputes the fee's cached status from what's left, same as
+   *  recordFeePayment -- never trusts a client-supplied status. */
+  async deleteFeePayment(feeId: string, paymentId: string, requestingUser?: { userId: string; role: string }) {
+    const fee = await this.findOne(feesTable, feeId, "Fee");
+    await this.assertExistingRowPortalAccess(feesTable, feeId, requestingUser, "Fee not found");
+    const [payment] = await this.databaseService.db
+      .select({ id: feePaymentsTable.id })
+      .from(feePaymentsTable)
+      .where(and(eq(feePaymentsTable.id, paymentId), eq(feePaymentsTable.feeId, feeId)))
+      .limit(1);
+    if (!payment) throw new NotFoundException("Payment not found");
+    await this.databaseService.db.delete(feePaymentsTable).where(eq(feePaymentsTable.id, paymentId));
+
+    const remaining = ((await this.sumPaymentsForFees([feeId])).get(feeId)) ?? 0;
+    const netFee = this.netFeeAmount(fee);
+    const status: FeeStatus = remaining <= 0 ? "PENDING" : remaining >= netFee ? "PAID" : "PARTIAL";
+    const updatedFee = await this.update(feesTable, feeId, { status }, "Fee");
+    await this.syncStudentFeeStatus(fee.studentId);
+    return { deleted: true, fee: { ...updatedFee, paidAmount: remaining } };
   }
 
   /**
@@ -957,8 +1051,15 @@ export class SchoolService {
 
     const todayIso = new Date().toISOString().slice(0, 10);
     const toNumber = (value: string | null) => Number(value ?? 0);
+    // A PARTIAL fee is neither fully collected nor fully pending -- what's actually been paid on
+    // it (sumPaymentsForFees, same source the Accountant's own fee list uses) counts as collected,
+    // the rest stays pending/overdue. A PAID fee's full amount is trusted as collected without a
+    // payments lookup (older fees marked PAID before this feature existed have no payment rows).
+    const paidByFee = await this.sumPaymentsForFees(fees.filter((fee) => fee.status === "PARTIAL").map((fee) => fee.id));
+    const collectedOnFee = (fee: (typeof fees)[number]) =>
+      fee.status === "PAID" ? toNumber(fee.amount) : fee.status === "PARTIAL" ? (paidByFee.get(fee.id) ?? 0) : 0;
 
-    const feesCollected = fees.filter((fee) => fee.status === "PAID").reduce((sum, fee) => sum + toNumber(fee.amount), 0);
+    const feesCollected = fees.reduce((sum, fee) => sum + collectedOnFee(fee), 0);
     const otherIncome = income.reduce((sum, entry) => sum + toNumber(entry.amount), 0);
     const totalExpenses = expenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
     const totalRevenue = feesCollected + otherIncome;
@@ -975,10 +1076,13 @@ export class SchoolService {
     for (const fee of fees) {
       const month = fee.dueDate.slice(0, 7);
       const bucket = monthBuckets.get(month) ?? { month, collected: 0, pending: 0, overdue: 0 };
-      const amount = toNumber(fee.amount);
-      if (fee.status === "PAID") bucket.collected += amount;
-      else if (fee.dueDate < todayIso) bucket.overdue += amount;
-      else bucket.pending += amount;
+      const collected = collectedOnFee(fee);
+      const remaining = toNumber(fee.amount) - collected;
+      bucket.collected += collected;
+      if (remaining > 0) {
+        if (fee.dueDate < todayIso) bucket.overdue += remaining;
+        else bucket.pending += remaining;
+      }
       monthBuckets.set(month, bucket);
     }
     const feeCollectionByMonth = [...monthBuckets.values()].sort((a, b) => a.month.localeCompare(b.month));
@@ -995,7 +1099,9 @@ export class SchoolService {
           studentName: student?.name ?? "Unknown",
           admissionNo: student?.admissionNo ?? "",
           className: student?.className ?? "",
-          amount: toNumber(fee.amount),
+          // The balance still owed, not the invoice's original full amount -- a PARTIAL fee that's
+          // mostly paid off shouldn't look as bad on a defaulters list as one nobody has touched.
+          amount: toNumber(fee.amount) - collectedOnFee(fee),
           dueDate: fee.dueDate,
           status: fee.status,
           daysOverdue

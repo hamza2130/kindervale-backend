@@ -321,6 +321,25 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "photo_url" text
       `);
 
+      // Partial/recorded payments against a fee (Phase 2 of the fee-structure work): a fee's
+      // own status stays a cached summary (PENDING/PARTIAL/PAID), the real history of what was
+      // actually collected lives here, one row per installment.
+      await this.db.execute(sql`
+        CREATE TABLE IF NOT EXISTS "fee_payments" (
+          "id" text PRIMARY KEY NOT NULL,
+          "fee_id" text NOT NULL REFERENCES "fees"("id") ON DELETE CASCADE,
+          "amount" numeric(10, 2) NOT NULL,
+          "method" text,
+          "note" text,
+          "paid_at" timestamp DEFAULT now() NOT NULL,
+          "recorded_by" text REFERENCES "users"("id") ON DELETE SET NULL,
+          "created_at" timestamp DEFAULT now() NOT NULL
+        )
+      `);
+      await this.db.execute(sql`
+        CREATE INDEX IF NOT EXISTS "fee_payments_fee_id_idx" ON "fee_payments" ("fee_id")
+      `);
+
       this.logger.log("Database migrations applied successfully");
       return true;
     } catch (error) {
