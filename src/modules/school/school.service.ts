@@ -24,7 +24,6 @@ import { basename, extname, join } from "node:path";
 import {
   calendarEventsTable,
   attendanceTable,
-  backupsTable,
   classesTable,
   daycareReportsTable,
   daycareResourcesTable,
@@ -54,7 +53,6 @@ import usersTable from "models/users";
 import { DatabaseService } from "modules/database/database.service";
 import {
   CreateCalendarEventDto,
-  CreateBackupDto,
   CreateDaycareReportDto,
   CreateDaycareResourceDto,
   CreateDocumentDto,
@@ -1132,18 +1130,6 @@ export class SchoolService {
 
   deleteDaycareResource(id: string) {
     return this.delete(daycareResourcesTable, id, "Daycare resource");
-  }
-
-  createBackup(dto: CreateBackupDto, requestedBy?: string) {
-    return this.insert(backupsTable, { ...dto, requestedBy }, "backup request");
-  }
-
-  getBackups() {
-    return this.databaseService.db.select().from(backupsTable);
-  }
-
-  getBackup(id: string) {
-    return this.findOne(backupsTable, id, "Backup");
   }
 
   createNotification(dto: CreateNotificationDto, requestingUser?: { userId: string; role: string }) {

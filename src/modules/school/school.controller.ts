@@ -9,7 +9,6 @@ import { PermissionGuard } from "middleware/permission.guard";
 import { User } from "middleware/user.decorator";
 import {
   CreateCalendarEventDto,
-  CreateBackupDto,
   CreateDaycareReportDto,
   CreateDaycareResourceDto,
   CreateDocumentDto,
@@ -663,24 +662,6 @@ export class SchoolController {
   async deleteDaycareResource(@Param() { id }: ParamDto) {
     await this.schoolService.deleteDaycareResource(id);
     return { message: "Daycare resource deleted successfully" };
-  }
-
-  @RequirePermission("settings", "MANAGE")
-  @Post("backups")
-  async createBackup(@Body() dto: CreateBackupDto, @User("userId") userId: string) {
-    return { data: await this.schoolService.createBackup(dto, userId) };
-  }
-
-  @RequirePermission("settings", "MANAGE")
-  @Get("backups")
-  async getBackups() {
-    return { data: await this.schoolService.getBackups() };
-  }
-
-  @RequirePermission("settings", "MANAGE")
-  @Get("backups/:id")
-  async getBackup(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getBackup(id) };
   }
 
   @RequirePermission("notices", "CREATE")
