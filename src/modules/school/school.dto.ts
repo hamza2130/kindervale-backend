@@ -77,6 +77,25 @@ export class VoidFeeDto {
   reason?: string;
 }
 
+export class CreateFeePaymentDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  amount: number;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(50)
+  method?: string;
+
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(500)
+  note?: string;
+}
+
 export class CreateFeeStructureDto {
   @IsString()
   @Trim()

@@ -17,6 +17,7 @@ import {
   CreateIncomeDto,
   CreateFaqDto,
   CreateFeeDto,
+  CreateFeePaymentDto,
   CreateLeaveRequestDto,
   CreateNotificationDto,
   CreateReportCardDto,
@@ -98,6 +99,39 @@ export class SchoolController {
   @Post("fees/:id/void")
   async voidFee(@Param() { id }: ParamDto, @Body() dto: VoidFeeDto, @User("userId") userId: string, @User("role") role: string) {
     return { data: await this.schoolService.voidFee(id, dto, { userId, role }) };
+  }
+
+  @RequirePermission("fees", "UPDATE")
+  @Post("fees/:id/payments")
+  async recordFeePayment(
+    @Param() { id }: ParamDto,
+    @Body() dto: CreateFeePaymentDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.recordFeePayment(id, dto, { userId, role }) };
+  }
+
+  @RequirePermission("fees", "READ")
+  @Get("fees/:id/payments")
+  async getFeePayments(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getFeePayments(id, { userId, role }) };
+  }
+
+  // Same bar as voidFee -- fees:DELETE isn't granted to anyone today, so correcting a
+  // mis-entered payment goes through the same UPDATE permission that covers the rest of a fee's
+  // lifecycle (void, status). Bound as two plain @Param()s rather than a DTO -- the global
+  // ValidationPipe runs with forbidNonWhitelisted, which would 400 every request if paymentId
+  // weren't a decorated property on whatever class-validator class received it.
+  @RequirePermission("fees", "UPDATE")
+  @Delete("fees/:id/payments/:paymentId")
+  async deleteFeePayment(
+    @Param("id") id: string,
+    @Param("paymentId") paymentId: string,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.deleteFeePayment(id, paymentId, { userId, role }) };
   }
 
   // Upsert by className -- "set the fee for Prep-A" without the caller needing to know an id.

@@ -155,6 +155,27 @@ export const feesTable = pgTable("fees", {
 });
 
 /**
+ * A single payment applied against a fee's net amount (gross minus scholarship). A fee can
+ * receive more than one of these -- a family paying in installments -- so "paid" is always
+ * derived by summing these rows against the fee, never a single boolean/amount on feesTable
+ * itself. The fee row's own `status` is kept in sync (PENDING -> PARTIAL -> PAID) as a cached
+ * summary so list views don't need to join+sum on every render.
+ */
+export const feePaymentsTable = pgTable("fee_payments", {
+  id: cuid().primaryKey(),
+  feeId: text()
+    .notNull()
+    .references(() => feesTable.id, { onDelete: "cascade" }),
+  amount: numeric({ precision: 10, scale: 2 }).notNull(),
+  method: text(),
+  note: text(),
+  paidAt: timestamp().defaultNow().notNull(),
+  recordedBy: text().references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp().defaultNow().notNull()
+});
+export type FeePayment = typeof feePaymentsTable.$inferSelect;
+
+/**
  * The default monthly fee for a class, used to actually generate invoices instead of the flat
  * hardcoded amount every student used to get regardless of which class they're in. Daycare is
  * never billed per child (decision 3), so a structure only ever makes sense for a Kindervale
