@@ -301,6 +301,26 @@ export class DatabaseService implements OnApplicationBootstrap, OnModuleDestroy 
           ADD COLUMN IF NOT EXISTS "contact_phone" text
       `);
 
+      // Report-card redesign: a report is either a midterm Progress Check or a Final/End-of-Year
+      // Report, and which label set it renders with (see common/report-template.ts) depends on
+      // this, not on the free-text `term` display string. photoUrl on students backs the circle
+      // photo an End-of-Year report shows (optional -- a student with none gets a plain avatar).
+      await this.db.execute(sql`
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'report_type') THEN
+            CREATE TYPE "report_type" AS ENUM ('MIDTERM', 'FINAL');
+          END IF;
+        END $$
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE "report_cards"
+          ADD COLUMN IF NOT EXISTS "report_type" "report_type" NOT NULL DEFAULT 'MIDTERM'
+      `);
+      await this.db.execute(sql`
+        ALTER TABLE "students"
+          ADD COLUMN IF NOT EXISTS "photo_url" text
+      `);
+
       this.logger.log("Database migrations applied successfully");
       return true;
     } catch (error) {

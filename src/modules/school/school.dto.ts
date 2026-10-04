@@ -23,11 +23,13 @@ import {
   feeStatusEnum,
   leaveStatusEnum,
   notificationAudienceEnum,
+  reportTypeEnum,
   reviewStatusEnum,
   type DocumentType,
   type FeeStatus,
   type LeaveStatus,
   type NotificationAudience,
+  type ReportType,
   type ReviewStatus
 } from "models/school";
 import { teacherAttendanceEnum, type TeacherAttendance } from "models/teachers";
@@ -193,6 +195,10 @@ export class CreateReportCardDto {
   @IsString()
   @Trim()
   term: string;
+
+  @IsOptional()
+  @IsEnum(reportTypeEnum.enumValues)
+  reportType?: ReportType;
 
   @IsString()
   @Trim()

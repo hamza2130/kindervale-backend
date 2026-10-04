@@ -30,6 +30,12 @@ export type LessonPlanStatus = (typeof lessonPlanStatusEnum.enumValues)[number];
 export const reviewStatusEnum = pgEnum("review_status", ["DRAFT", "PENDING", "APPROVED", "REJECTED"]);
 export type ReviewStatus = (typeof reviewStatusEnum.enumValues)[number];
 
+// Decouples which label set a report card renders with (see common/report-template.ts) from the
+// free-text `term` display string ("January 2026") -- a report is either a midterm Progress Check
+// or a Final/End-of-Year Report, and a handful of section labels differ between the two.
+export const reportTypeEnum = pgEnum("report_type", ["MIDTERM", "FINAL"]);
+export type ReportType = (typeof reportTypeEnum.enumValues)[number];
+
 export const documentTypeEnum = pgEnum("document_type", ["DOCUMENT", "PHOTO", "REPORT_CARD", "POLICY"]);
 export type DocumentType = (typeof documentTypeEnum.enumValues)[number];
 
@@ -66,6 +72,7 @@ export const studentsTable = pgTable("students", {
   address: text(),
   emergencyContactName: text(),
   emergencyContactPhone: text(),
+  photoUrl: text(),
   feeStatus: feeStatusEnum().default("PENDING").notNull(),
   // Set when a withdrawn/left student is archived (see StudentService.deleteStudent): their row
   // and every table that references studentId (attendance, fees, homework, report cards, ...)
@@ -179,6 +186,7 @@ export const reportCardsTable = pgTable("report_cards", {
     .notNull()
     .references(() => studentsTable.id, { onDelete: "cascade" }),
   term: text().notNull(),
+  reportType: reportTypeEnum().default("MIDTERM").notNull(),
   className: text().notNull(),
   academicYear: text().notNull(),
   summary: text(),

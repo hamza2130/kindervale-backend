@@ -87,6 +87,13 @@ export class CreateStudentDto {
   @MaxLength(30, { message: "Emergency contact phone is too long (max 30 characters)" })
   emergencyContactPhone?: string;
 
+  // Source for the circular photo an End-of-Year report card shows (see common/report-template.ts
+  // consumers) -- optional, a student with none gets a plain avatar fallback.
+  @IsOptional()
+  @IsString({ message: "Photo URL must be a string" })
+  @Trim()
+  photoUrl?: string;
+
   @IsOptional()
   @IsEnum(feeStatusEnum.enumValues, {
     message: `Fee status must be one of: ${feeStatusEnum.enumValues.join(", ")}`
@@ -174,6 +181,11 @@ export class UpdateStudentDto {
   @Trim()
   @MaxLength(30, { message: "Emergency contact phone is too long (max 30 characters)" })
   emergencyContactPhone?: string;
+
+  @IsOptional()
+  @IsString({ message: "Photo URL must be a string" })
+  @Trim()
+  photoUrl?: string;
 
   @IsOptional()
   @IsEnum(feeStatusEnum.enumValues, {

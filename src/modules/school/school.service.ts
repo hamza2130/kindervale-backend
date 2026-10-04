@@ -15,6 +15,7 @@ import {
   type SchoolPortal
 } from "common/portal-scope";
 import { ParamDto } from "common/common.dto";
+import { reportSubjectsFor } from "common/report-template";
 import { createId } from "@paralleldrive/cuid2";
 import { type Response } from "express";
 import { createReadStream } from "node:fs";
@@ -311,20 +312,59 @@ export class SchoolService {
   createReportCard(dto: CreateReportCardDto, createdBy?: string, requestingUser?: HomeroomCaller) {
     // Decision 7: a teacher may only write a report card for their own homeroom class.
     assertHomeroomForCreate(requestingUser, dto.className);
+    this.assertReportSummaryKeys(dto.className, dto.summary);
     return this.insert(reportCardsTable, { ...dto, createdBy }, "report card");
+  }
+
+  /**
+   * A report card's `summary` is a JSON blob of {comments: {<subjectKey>: string}, attendance}.
+   * Which subject keys are valid depends on the class's report band (see common/report-template.ts)
+   * -- without this check, a frontend bug (e.g. the mismatched label map this replaces) could
+   * silently write comments under keys nobody's template will ever render.
+   */
+  private assertReportSummaryKeys(className: string, summary: string | undefined): void {
+    if (!summary) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(summary);
+    } catch {
+      throw new BadRequestException("Report card summary must be valid JSON");
+    }
+    const comments = (parsed as { comments?: unknown })?.comments;
+    if (!comments || typeof comments !== "object") return;
+    const allowed = new Set(reportSubjectsFor(className));
+    const invalidKeys = Object.keys(comments).filter((key) => !allowed.has(key));
+    if (invalidKeys.length) {
+      throw new BadRequestException(`Invalid report card section(s) for ${className}: ${invalidKeys.join(", ")}`);
+    }
   }
 
   async getReportCards(requestingUser?: { userId: string; role: string; homeroomClassName?: string | null }) {
     const rows = await this.databaseService.db.select().from(reportCardsTable);
     // Decision 7: a teacher sees only report cards for their own homeroom class.
-    return this.scopeRowsToHomeroom(await this.scopeRowsToParent(rows, requestingUser), requestingUser);
+    return this.scopeRowsToHomeroom(this.hideUnapprovedFromParent(await this.scopeRowsToParent(rows, requestingUser), requestingUser), requestingUser);
   }
 
   async getReportCard(id: string, requestingUser?: { userId: string; role: string; homeroomClassName?: string | null }) {
     const reportCard = await this.findOne(reportCardsTable, id, "Report card");
-    const [scoped] = this.scopeRowsToHomeroom(await this.scopeRowsToParent([reportCard], requestingUser), requestingUser);
+    const scopedToParent = this.hideUnapprovedFromParent(await this.scopeRowsToParent([reportCard], requestingUser), requestingUser);
+    const [scoped] = this.scopeRowsToHomeroom(scopedToParent, requestingUser);
     if (!scoped) throw new NotFoundException("Report card not found");
     return scoped;
+  }
+
+  /**
+   * A report card merely "PENDING" (teacher submitted, admin hasn't approved yet) used to already
+   * be visible/downloadable to the parent -- the entire point of the admin "Approve Reports"
+   * screen was that a parent never sees a report until it's been reviewed, and this gate was
+   * missing entirely. No-op for every role except PARENT, same posture as scopeRowsToParent.
+   */
+  private hideUnapprovedFromParent<T extends { status?: unknown }>(
+    rows: T[],
+    requestingUser: { role: string } | undefined
+  ): T[] {
+    if (this.normalizeRole(requestingUser?.role) !== "PARENT") return rows;
+    return rows.filter((row) => row.status === "APPROVED");
   }
 
   async updateReportCard(id: string, dto: UpdateReportCardDto, requestingUser?: HomeroomCaller) {
@@ -342,6 +382,7 @@ export class SchoolService {
     if (dto.status === "APPROVED") {
       throw new BadRequestException("Use POST /report-cards/:id/publish to approve a report card");
     }
+    if (dto.summary !== undefined) this.assertReportSummaryKeys(dto.className ?? existing.className, dto.summary);
     return this.update(reportCardsTable, id, dto, "Report card");
   }
 
