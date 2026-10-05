@@ -233,28 +233,6 @@ export const homeworkTable = pgTable("homework", {
   updatedAt: timestamp().defaultNow().notNull()
 });
 
-export const lessonPlansTable = pgTable("lesson_plans", {
-  id: cuid().primaryKey(),
-  teacherId: text()
-    .notNull()
-    .references(() => usersTable.id, { onDelete: "cascade" }),
-  classId: text()
-    .notNull()
-    .references(() => classesTable.id, { onDelete: "cascade" }),
-  subjectId: text().references(() => subjectsTable.id, { onDelete: "set null" }),
-  subject: text().notNull(),
-  weekStartDate: date().notNull(),
-  objectives: text().notNull(),
-  activities: text().notNull(),
-  resources: text(),
-  status: lessonPlanStatusEnum().default("DRAFT").notNull(),
-  reviewRemarks: text(),
-  reviewedBy: text().references(() => usersTable.id, { onDelete: "set null" }),
-  reviewedAt: timestamp(),
-  createdAt: timestamp().defaultNow().notNull(),
-  updatedAt: timestamp().defaultNow().notNull()
-});
-
 export const calendarEventsTable = pgTable("calendar_events", {
   id: cuid().primaryKey(),
   title: text().notNull(),
@@ -548,7 +526,6 @@ export type FeeStructure = typeof feeStructuresTable.$inferSelect;
 export type Exam = typeof examsTable.$inferSelect;
 export type ReportCard = typeof reportCardsTable.$inferSelect;
 export type Homework = typeof homeworkTable.$inferSelect;
-export type LessonPlan = typeof lessonPlansTable.$inferSelect;
 export type CalendarEvent = typeof calendarEventsTable.$inferSelect;
 export type Timetable = typeof timetablesTable.$inferSelect;
 export type Document = typeof documentsTable.$inferSelect;

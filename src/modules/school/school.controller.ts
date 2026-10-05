@@ -345,20 +345,30 @@ export class SchoolController {
 
   @RequirePermission("documents", "READ")
   @Get("documents")
-  async getDocuments(@Query("type") type?: string, @Query("uploadedBy") uploadedBy?: string) {
-    return { data: await this.schoolService.getDocuments({ type, uploadedBy }) };
+  async getDocuments(
+    @Query("type") type: string | undefined,
+    @Query("uploadedBy") uploadedBy: string | undefined,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.getDocuments({ type, uploadedBy }, { userId, role }) };
   }
 
   @RequirePermission("documents", "READ")
   @Get("documents/:id")
-  async getDocument(@Param() { id }: ParamDto) {
-    return { data: await this.schoolService.getDocument(id) };
+  async getDocument(@Param() { id }: ParamDto, @User("userId") userId: string, @User("role") role: string) {
+    return { data: await this.schoolService.getDocument(id, { userId, role }) };
   }
 
   @RequirePermission("documents", "READ")
   @Get("documents/:id/download")
-  async downloadDocument(@Param() { id }: ParamDto, @Res() response: Response) {
-    await this.schoolService.streamDocument(id, response);
+  async downloadDocument(
+    @Param() { id }: ParamDto,
+    @Res() response: Response,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    await this.schoolService.streamDocument(id, response, { userId, role });
   }
 
   @RequirePermission("documents", "UPDATE")
@@ -387,8 +397,12 @@ export class SchoolController {
 
   @RequirePermission("weekly-objectives", "READ")
   @Get("weekly-objectives")
-  async getWeeklyObjectives(@User("role") role: string, @User("homeroomClassName") homeroomClassName?: string | null) {
-    return { data: await this.schoolService.getWeeklyObjectives({ role, homeroomClassName }) };
+  async getWeeklyObjectives(
+    @User("userId") userId: string,
+    @User("role") role: string,
+    @User("homeroomClassName") homeroomClassName?: string | null
+  ) {
+    return { data: await this.schoolService.getWeeklyObjectives({ role, homeroomClassName }, userId) };
   }
 
   @RequirePermission("weekly-objectives", "UPDATE")
@@ -416,14 +430,23 @@ export class SchoolController {
 
   @RequirePermission("homework-submissions", "READ")
   @Get("homework-submissions")
-  async getHomeworkSubmissions(@Query("studentId") studentId?: string) {
-    return { data: await this.schoolService.getHomeworkSubmissions(studentId) };
+  async getHomeworkSubmissions(
+    @Query("studentId") studentId: string | undefined,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.getHomeworkSubmissions(studentId, { userId, role }) };
   }
 
   @RequirePermission("homework-submissions", "CREATE")
   @Post("homework-submissions/:id/submit")
-  async submitHomework(@Param() { id }: ParamDto, @Body() dto: SubmitHomeworkDto, @User("userId") userId: string) {
-    return { data: await this.schoolService.submitHomework(id, dto, userId) };
+  async submitHomework(
+    @Param() { id }: ParamDto,
+    @Body() dto: SubmitHomeworkDto,
+    @User("userId") userId: string,
+    @User("role") role: string
+  ) {
+    return { data: await this.schoolService.submitHomework(id, dto, userId, { userId, role }) };
   }
 
   @RequirePermission("documents", "CREATE")

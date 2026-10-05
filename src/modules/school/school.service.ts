@@ -239,6 +239,13 @@ export class SchoolService {
   async voidFee(id: string, dto: VoidFeeDto, requestingUser?: { userId: string; role: string }) {
     const existing = await this.findOne(feesTable, id, "Fee");
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
+    // Voiding an already-void invoice used to silently overwrite voidedAt/voidReason with
+    // whatever the second call happened to send -- harmless for the totals (status was already
+    // excluded everywhere), but it destroyed the original void's audit trail (who voided it and
+    // why) for no reason. A no-op repeat is the one case this should reject outright.
+    if (existing.status === "VOID") {
+      throw new BadRequestException("This invoice is already voided.");
+    }
     const fee = await this.update(feesTable, id, { status: "VOID", voidedAt: new Date(), voidReason: dto.reason }, "Fee");
     await this.syncStudentFeeStatus(existing.studentId);
     return fee;
@@ -711,13 +718,37 @@ export class SchoolService {
    * the CASE in Postgres itself: the large column's bytes never leave the database for a non-PHOTO
    * row, rather than being fetched here and only discarded afterwards.
    */
-  getDocuments(query: { type?: string; uploadedBy?: string } = {}) {
+  /**
+   * Neither the list nor a by-id lookup ever checked `audience` or `studentId` against the
+   * caller -- any authenticated user with the ordinary documents:READ grant (which includes
+   * Teacher, Parent, Accountant) got every document in the system back, metadata and all, and
+   * could open/download any of them by id, including ones tied to a specific student that isn't
+   * theirs. Class photos are the one type exempt from the per-student check below: they're meant
+   * to be seen by the whole class they belong to, not gated to one family, and their own
+   * portal/homeroom access is already enforced separately (deleteDocument, class-photo upload).
+   */
+  private async scopeDocumentsForCaller(rows: any[], requestingUser?: { userId: string; role: string }): Promise<any[]> {
+    const role = requestingUser?.role?.toUpperCase();
+    const staffOverview = role === "ADMIN" || role === "PRINCIPAL" || role === "DAYCAREADMIN";
+    if (staffOverview) return rows;
+    const audienceOk = (row: any) => row.audience === "ALL" || row.audience === role;
+    if (role === "PARENT") {
+      const ownStudentIds = new Set(requestingUser?.userId ? await this.resolveParentStudentIds(requestingUser.userId) : []);
+      return rows.filter((row) => (row.studentId && row.type !== "PHOTO" ? ownStudentIds.has(row.studentId) : audienceOk(row)));
+    }
+    // Teacher, Accountant, or any other non-staff-overview caller: a document tied to a specific
+    // student isn't theirs to read at all (they're not that child's parent); everything else
+    // still goes through the normal audience check.
+    return rows.filter((row) => (row.studentId && row.type !== "PHOTO" ? false : audienceOk(row)));
+  }
+
+  async getDocuments(query: { type?: string; uploadedBy?: string } = {}, requestingUser?: { userId: string; role: string }) {
     const conditions: SQL[] = [];
     if (query.type) conditions.push(eq(documentsTable.type, query.type as any));
     if (query.uploadedBy) conditions.push(eq(documentsTable.uploadedBy, query.uploadedBy));
     // Expired class photos are hidden even if the hourly cleanup hasn't removed them yet.
     conditions.push(sql`not (${expiredClassPhotoSql()})`);
-    return this.databaseService.db
+    const rows = await this.databaseService.db
       .select({
         id: documentsTable.id,
         title: documentsTable.title,
@@ -732,10 +763,14 @@ export class SchoolService {
       })
       .from(documentsTable)
       .where(and(...conditions));
+    return this.scopeDocumentsForCaller(rows, requestingUser);
   }
 
-  getDocument(id: string) {
-    return this.findOne(documentsTable, id, "Document");
+  async getDocument(id: string, requestingUser?: { userId: string; role: string }) {
+    const document = await this.findOne(documentsTable, id, "Document");
+    const [scoped] = await this.scopeDocumentsForCaller([document], requestingUser);
+    if (!scoped) throw new NotFoundException("Document not found");
+    return scoped;
   }
 
   /**
@@ -748,7 +783,7 @@ export class SchoolService {
   async deleteDocument(id: string, requestingUser?: { userId: string; role: string }): Promise<void> {
     const normalizedRole = (requestingUser?.role ?? "").trim().toUpperCase().replace(/[\s_-]+/g, "");
     if (normalizedRole === "DAYCAREADMIN") {
-      const document = await this.getDocument(id);
+      const document = await this.getDocument(id, requestingUser);
       const meta = this.parseDocumentMetadata(document.description);
       if (meta.kind === "classPhoto" && meta.cls) {
         assertPortalAccess(requestingUser?.role, meta.cls, "Document not found");
@@ -761,8 +796,8 @@ export class SchoolService {
     await this.delete(documentsTable, id, "Document");
   }
 
-  async streamDocument(id: string, response: Response) {
-    const document = await this.getDocument(id);
+  async streamDocument(id: string, response: Response, requestingUser?: { userId: string; role: string }) {
+    const document = await this.getDocument(id, requestingUser);
     if (isExpiredClassPhoto(document)) throw new NotFoundException("This photo has expired");
     const metadata = this.parseDocumentMetadata(document.description);
     const contentType = metadata.mimeType || "application/octet-stream";
@@ -818,6 +853,16 @@ export class SchoolService {
     }
 
     const normalizedRole = role?.toUpperCase();
+    // A parent could file leave for any student id, not just their own child -- nothing checked
+    // dto.studentId against the caller at all. Admin/Daycare Admin/Principal filing "on behalf of"
+    // someone is unrestricted by design (isAdminCreated below); only a self-filing PARENT needs
+    // this check, matching every other parent-scoped read elsewhere in this file.
+    if (normalizedRole === "PARENT" && dto.studentId && authenticatedUserId) {
+      const ownStudentIds = await this.resolveParentStudentIds(authenticatedUserId);
+      if (!ownStudentIds.includes(dto.studentId)) {
+        throw new NotFoundException("Student not found");
+      }
+    }
     const isAdminCreated =
       normalizedRole === "ADMIN" || normalizedRole === "DAYCAREADMIN" || normalizedRole === "PRINCIPAL";
     // Admins may file a request on somebody else's behalf, so the request stays owned by that
@@ -919,6 +964,15 @@ export class SchoolService {
    * since leave_requests itself carries no className. */
   private async findLeaveRequestWithPortalCheck(id: string, requestingUser?: { userId: string; role: string }) {
     const leave = await this.findOne(leaveRequestsTable, id, "Leave request");
+    // callerPortal() only returns a portal for ADMIN/DAYCAREADMIN when given a bare role string
+    // (TEACHER needs an object with .portal, which nothing here ever passes) -- so the check below
+    // was a complete no-op for PARENT and TEACHER, the two roles that can actually reach this via
+    // GET /leave-requests/:id (documents:READ). Both only ever file their own (createLeaveRequest
+    // forces userId = the caller for either), so "is this mine" is the right and only check.
+    const role = requestingUser?.role?.toUpperCase();
+    if ((role === "PARENT" || role === "TEACHER") && leave.userId !== requestingUser?.userId) {
+      throw new NotFoundException("Leave request not found");
+    }
     if (callerPortal(requestingUser?.role)) {
       const [teacher] = await this.databaseService.db
         .select({ className: teachersTable.className })
@@ -1252,6 +1306,11 @@ export class SchoolService {
   async getNotification(id: string, requestingUser?: { userId: string; role: string }) {
     const notification = await this.findOne(notificationsTable, id, "Notification");
     this.assertEventPortalAccess(requestingUser, notification.portal, "Notification not found");
+    const role = requestingUser?.role?.toUpperCase();
+    const staffOverview = role === "ADMIN" || role === "PRINCIPAL" || role === "DAYCAREADMIN";
+    if (!staffOverview && notification.audience !== "ALL" && notification.audience !== role) {
+      throw new NotFoundException("Notification not found");
+    }
     return notification;
   }
 
@@ -1281,7 +1340,17 @@ export class SchoolService {
 
   // ---------------------------------------------------------------- homework hand-ins
   /** Recording a hand-in twice is a no-op rather than an error. */
-  async submitHomework(homeworkId: string, dto: SubmitHomeworkDto, submittedBy?: string) {
+  async submitHomework(homeworkId: string, dto: SubmitHomeworkDto, submittedBy?: string, requestingUser?: { userId: string; role: string }) {
+    // Only PARENT has homework-submissions:CREATE (Admin aside, which bypasses via MANAGE) -- but
+    // dto.studentId was never checked against the caller, so a parent could overwrite any other
+    // family's submission note for a given homework by just naming their student id, same shape
+    // as the leave-request/record-payment IDORs fixed alongside this.
+    if (requestingUser?.role?.toUpperCase() === "PARENT") {
+      const ownStudentIds = await this.resolveParentStudentIds(requestingUser.userId);
+      if (!ownStudentIds.includes(dto.studentId)) {
+        throw new NotFoundException("Student not found");
+      }
+    }
     const [existing] = await this.databaseService.db
       .select({ id: homeworkSubmissionsTable.id })
       .from(homeworkSubmissionsTable)
@@ -1309,15 +1378,34 @@ export class SchoolService {
     );
   }
 
-  getHomeworkSubmissions(studentId?: string) {
+  /** No scoping at all before this: omit studentId and every role with homework-submissions:READ
+   *  (Parent included) got every family's submissions back; pass any studentId and it was trusted
+   *  outright, so a parent could read a specific other family's note by id too. */
+  async getHomeworkSubmissions(studentId?: string, requestingUser?: { userId: string; role: string }) {
     const query = this.databaseService.db.select().from(homeworkSubmissionsTable).$dynamic();
+    if (requestingUser?.role?.toUpperCase() === "PARENT") {
+      const ownStudentIds = await this.resolveParentStudentIds(requestingUser.userId);
+      if (studentId && !ownStudentIds.includes(studentId)) return [];
+      if (!ownStudentIds.length) return [];
+      return query.where(studentId ? eq(homeworkSubmissionsTable.studentId, studentId) : inArray(homeworkSubmissionsTable.studentId, ownStudentIds));
+    }
     return studentId ? query.where(eq(homeworkSubmissionsTable.studentId, studentId)) : query;
   }
 
   // ---------------------------------------------------------------- notification read state
   /** Notifications carry an audience, so read state has to be tracked per person. */
   async getNotificationsForUser(userId?: string, requestingUser?: { userId: string; role: string; portal?: string | null }) {
-    const notifications = await this.getNotifications(requestingUser);
+    const allNotifications = await this.getNotifications(requestingUser);
+    // Portal was already filtered above; audience (role-targeted, e.g. the system-generated
+    // "Student leave approved ... Teacher user: <id>" notice created with audience:"TEACHER") was
+    // not -- any role in the same portal could read a notice meant for one role only, internal
+    // user id included. Admin/Principal/Daycare Admin keep seeing everything, matching the broad
+    // operational visibility they already have everywhere else in this app.
+    const role = requestingUser?.role?.toUpperCase();
+    const staffOverview = role === "ADMIN" || role === "PRINCIPAL" || role === "DAYCAREADMIN";
+    const notifications = staffOverview
+      ? allNotifications
+      : allNotifications.filter((notification) => notification.audience === "ALL" || notification.audience === role);
     if (!userId) return notifications.map((notification) => ({ ...notification, read: false }));
 
     const reads = await this.databaseService.db
@@ -1377,7 +1465,7 @@ export class SchoolService {
     return this.insert(weeklyObjectivesTable, { ...dto, teacherId, status: "PENDING" }, "weekly objective");
   }
 
-  getWeeklyObjectives(requestingUser?: HomeroomCaller) {
+  async getWeeklyObjectives(requestingUser?: HomeroomCaller, userId?: string) {
     // Decision 7: a teacher sees only their own homeroom class's objectives, not every class's.
     const homeroomCondition = homeroomFilterCondition(weeklyObjectivesTable.className, requestingUser);
     const query = this.databaseService.db
@@ -1396,7 +1484,24 @@ export class SchoolService {
       })
       .from(weeklyObjectivesTable)
       .leftJoin(usersTable, eq(weeklyObjectivesTable.teacherId, usersTable.id));
-    return homeroomCondition ? query.where(homeroomCondition) : query;
+    if (homeroomCondition) return query.where(homeroomCondition);
+    // homeroomFilterCondition only ever confines TEACHER -- every other role, PARENT included,
+    // got every class's weekly objectives back with no filter at all (a daycare parent could
+    // read Kindervale classes' messages and vice versa). A parent is scoped to their own
+    // children's class name(s); Admin/Principal/Daycare Admin keep the unfiltered view, same
+    // broad operational visibility they already have everywhere else in this app.
+    if (requestingUser?.role?.toUpperCase() === "PARENT" && userId) {
+      const studentIds = await this.resolveParentStudentIds(userId);
+      if (!studentIds.length) return [];
+      const ownClasses = await this.databaseService.db
+        .select({ className: studentsTable.className })
+        .from(studentsTable)
+        .where(inArray(studentsTable.id, studentIds));
+      const classNames = [...new Set(ownClasses.map((row) => row.className).filter(Boolean))] as string[];
+      if (!classNames.length) return [];
+      return query.where(inArray(weeklyObjectivesTable.className, classNames));
+    }
+    return query;
   }
 
   updateWeeklyObjective(id: string, dto: UpdateWeeklyObjectiveDto) {
@@ -1649,14 +1754,23 @@ export class SchoolService {
     }
   }
 
+  /** Pure UTC date math, deliberately not `new Date(dateStr + "T00:00:00")` -- that parses in the
+   *  server's OS timezone, so on any host running ahead of UTC (this dev machine included) the
+   *  first/last day of a leave range would silently drop by one when re-serialized through
+   *  toISOString(). Render happens to run in UTC so this never shows up there, but the bug was
+   *  real and host-dependent either way -- Date.UTC() makes it correct regardless of server TZ. */
   private inclusiveDateRange(fromDate: string, toDate: string) {
     const dates: string[] = [];
-    const start = new Date(`${fromDate}T00:00:00`);
-    const end = new Date(`${toDate}T00:00:00`);
+    const parseUtcDate = (dateStr: string) => {
+      const [year, month, day] = dateStr.split("-").map(Number);
+      return new Date(Date.UTC(year, month - 1, day));
+    };
+    const start = parseUtcDate(fromDate);
+    const end = parseUtcDate(toDate);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
       throw new BadRequestException("Invalid leave date range");
     }
-    for (const date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
+    for (const date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
       dates.push(date.toISOString().slice(0, 10));
     }
     return dates;
