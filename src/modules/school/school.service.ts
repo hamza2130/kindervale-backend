@@ -239,6 +239,13 @@ export class SchoolService {
   async voidFee(id: string, dto: VoidFeeDto, requestingUser?: { userId: string; role: string }) {
     const existing = await this.findOne(feesTable, id, "Fee");
     await this.assertExistingRowPortalAccess(feesTable, id, requestingUser, "Fee not found");
+    // Voiding an already-void invoice used to silently overwrite voidedAt/voidReason with
+    // whatever the second call happened to send -- harmless for the totals (status was already
+    // excluded everywhere), but it destroyed the original void's audit trail (who voided it and
+    // why) for no reason. A no-op repeat is the one case this should reject outright.
+    if (existing.status === "VOID") {
+      throw new BadRequestException("This invoice is already voided.");
+    }
     const fee = await this.update(feesTable, id, { status: "VOID", voidedAt: new Date(), voidReason: dto.reason }, "Fee");
     await this.syncStudentFeeStatus(existing.studentId);
     return fee;
