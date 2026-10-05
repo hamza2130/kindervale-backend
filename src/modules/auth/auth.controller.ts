@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Patch, Post, UseGuards } from "@nestjs/common";
 import { User } from "middleware/user.decorator";
 import { AuthGuard } from "middleware/auth.guard";
+import { SkipAccountStateCheck } from "middleware/account-state.decorator";
 import { AuthService } from "modules/auth/auth.service";
 import {
   ChangePasswordDto,
@@ -40,12 +41,14 @@ export class AuthController {
     return await this.authService.resetPassword(dto);
   }
 
+  @SkipAccountStateCheck()
   @UseGuards(AuthGuard)
   @Patch("change-password")
   async changePassword(@User("userId") userId: string, @Body() dto: ChangePasswordDto) {
     return await this.authService.changePassword(userId, dto);
   }
 
+  @SkipAccountStateCheck()
   @UseGuards(AuthGuard)
   @Get("profile")
   async profile(@User("userId") userId: string) {

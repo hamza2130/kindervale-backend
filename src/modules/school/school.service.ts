@@ -818,6 +818,16 @@ export class SchoolService {
     }
 
     const normalizedRole = role?.toUpperCase();
+    // A parent could file leave for any student id, not just their own child -- nothing checked
+    // dto.studentId against the caller at all. Admin/Daycare Admin/Principal filing "on behalf of"
+    // someone is unrestricted by design (isAdminCreated below); only a self-filing PARENT needs
+    // this check, matching every other parent-scoped read elsewhere in this file.
+    if (normalizedRole === "PARENT" && dto.studentId && authenticatedUserId) {
+      const ownStudentIds = await this.resolveParentStudentIds(authenticatedUserId);
+      if (!ownStudentIds.includes(dto.studentId)) {
+        throw new NotFoundException("Student not found");
+      }
+    }
     const isAdminCreated =
       normalizedRole === "ADMIN" || normalizedRole === "DAYCAREADMIN" || normalizedRole === "PRINCIPAL";
     // Admins may file a request on somebody else's behalf, so the request stays owned by that
@@ -919,6 +929,15 @@ export class SchoolService {
    * since leave_requests itself carries no className. */
   private async findLeaveRequestWithPortalCheck(id: string, requestingUser?: { userId: string; role: string }) {
     const leave = await this.findOne(leaveRequestsTable, id, "Leave request");
+    // callerPortal() only returns a portal for ADMIN/DAYCAREADMIN when given a bare role string
+    // (TEACHER needs an object with .portal, which nothing here ever passes) -- so the check below
+    // was a complete no-op for PARENT and TEACHER, the two roles that can actually reach this via
+    // GET /leave-requests/:id (documents:READ). Both only ever file their own (createLeaveRequest
+    // forces userId = the caller for either), so "is this mine" is the right and only check.
+    const role = requestingUser?.role?.toUpperCase();
+    if ((role === "PARENT" || role === "TEACHER") && leave.userId !== requestingUser?.userId) {
+      throw new NotFoundException("Leave request not found");
+    }
     if (callerPortal(requestingUser?.role)) {
       const [teacher] = await this.databaseService.db
         .select({ className: teachersTable.className })
