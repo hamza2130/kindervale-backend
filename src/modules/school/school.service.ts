@@ -1754,14 +1754,23 @@ export class SchoolService {
     }
   }
 
+  /** Pure UTC date math, deliberately not `new Date(dateStr + "T00:00:00")` -- that parses in the
+   *  server's OS timezone, so on any host running ahead of UTC (this dev machine included) the
+   *  first/last day of a leave range would silently drop by one when re-serialized through
+   *  toISOString(). Render happens to run in UTC so this never shows up there, but the bug was
+   *  real and host-dependent either way -- Date.UTC() makes it correct regardless of server TZ. */
   private inclusiveDateRange(fromDate: string, toDate: string) {
     const dates: string[] = [];
-    const start = new Date(`${fromDate}T00:00:00`);
-    const end = new Date(`${toDate}T00:00:00`);
+    const parseUtcDate = (dateStr: string) => {
+      const [year, month, day] = dateStr.split("-").map(Number);
+      return new Date(Date.UTC(year, month - 1, day));
+    };
+    const start = parseUtcDate(fromDate);
+    const end = parseUtcDate(toDate);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
       throw new BadRequestException("Invalid leave date range");
     }
-    for (const date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
+    for (const date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
       dates.push(date.toISOString().slice(0, 10));
     }
     return dates;
